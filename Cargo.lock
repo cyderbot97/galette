@@ -394,6 +394,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "claxon",
+ "crc32fast",
  "flacenc",
  "libc",
  "metaflac",

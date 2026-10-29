@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -11,7 +11,7 @@ use galette_core::drive::{self, Drive};
 use galette_core::ids::{self, AccurateRipId};
 use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::metadata::{Release, musicbrainz};
-use galette_core::{flac, rip, tags};
+use galette_core::{cue, flac, gaps, log, rip, tags};
 use galette_core::toc::{self, Toc};
 use galette_core::wav;
 
@@ -82,6 +82,15 @@ enum Format {
     Flac,
     /// Uncompressed, without any metadata.
     Wav,
+}
+
+impl Format {
+    fn extension(self) -> &'static str {
+        match self {
+            Format::Flac => "flac",
+            Format::Wav => "wav",
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -202,13 +211,25 @@ fn rip(args: &RipArgs) -> Result<()> {
         (Some(r), Format::Flac) if !args.no_cover => fetch_cover(r, &album_dir),
         _ => None,
     };
+
+    print!("Subcode  reading pregaps, ISRCs and MCN…");
+    std::io::stdout().flush().ok();
+    let subcode = read_subcode(&mut drive, &toc);
+    let gaps = subcode.pregaps.iter().filter(|&&g| g > 0).count();
+    println!(
+        "\rSubcode  {gaps} pregap(s), {} ISRC(s), MCN {}          ",
+        subcode.isrcs.iter().flatten().count(),
+        subcode.mcn.as_deref().unwrap_or("none")
+    );
+    if toc.tracks[0].start > 0 {
+        println!("Warning  {} of hidden audio before track 1 are not ripped", toc::format_msf(toc.tracks[0].start));
+    }
     println!();
 
     let disc_id = ids::musicbrainz(&toc);
-
     let audio_count = toc.audio_tracks().count();
-    let mut accurate = 0;
-    let mut ripped = 0;
+    let mut track_logs = Vec::new();
+    let mut cue_tracks = Vec::new();
     let started = Instant::now();
     for (position, (index, track)) in toc.tracks.iter().enumerate().filter(|(_, t)| t.is_audio).enumerate() {
         if !args.tracks.is_empty() && !args.tracks.contains(&track.number) {
@@ -220,6 +241,7 @@ fn rip(args: &RipArgs) -> Result<()> {
             .map(|t| t.title.clone())
             .unwrap_or_else(|| format!("Track {}", track.number));
         let label = format!("{:>2}. {title}", track.number);
+        let isrc = subcode.isrcs[index].clone();
 
         let audio = rip::read_track(&mut drive, &toc, index, offset, &mut |done| {
             print!("\r{label}  {:>3}%", (done * 100.0) as u32);
@@ -227,19 +249,21 @@ fn rip(args: &RipArgs) -> Result<()> {
         })
         .with_context(|| format!("cannot read track {}", track.number))?;
 
-        let name = format!("{:02} - {}", track.number, sanitize(&title));
+        let file_name = format!("{:02} - {}.{}", track.number, sanitize(&title), args.format.extension());
+        let path = album_dir.join(&file_name);
         match args.format {
             Format::Flac => {
                 print!("\r{label}  encoding");
                 std::io::stdout().flush().ok();
-                let tags = tags::vorbis_comments(release.as_ref(), track.number as u32, audio_count as u32, &disc_id);
+                let mut tags = tags::vorbis_comments(release.as_ref(), track.number as u32, audio_count as u32, &disc_id);
+                if let Some(isrc) = &isrc {
+                    tags.push(("ISRC", isrc.clone()));
+                }
                 let file = flac::encode(&audio, &tags, cover.as_ref())
                     .with_context(|| format!("cannot encode track {}", track.number))?;
-                let path = album_dir.join(format!("{name}.flac"));
                 fs::write(&path, file).with_context(|| format!("cannot write {}", path.display()))?;
             }
             Format::Wav => {
-                let path = album_dir.join(format!("{name}.wav"));
                 let mut file =
                     BufWriter::new(File::create(&path).with_context(|| format!("cannot create {}", path.display()))?);
                 wav::write(&mut file, &audio)?;
@@ -247,23 +271,84 @@ fn rip(args: &RipArgs) -> Result<()> {
             }
         }
 
-        let sums = accuraterip::checksums(&audio, position + 1, audio_count);
-        let verdict = accuraterip::verify(pressings.as_deref(), position, sums);
-        let verdict = match verdict {
-            Verdict::Accurate { version, confidence } => {
-                accurate += 1;
-                format!("accurate (v{version}, confidence {confidence})")
-            }
-            Verdict::Mismatch => "NOT ACCURATE".to_string(),
-            Verdict::Unknown => "not verified".to_string(),
-        };
-        ripped += 1;
-        println!("\r{label}  [{:08X} / {:08X}]  {verdict}", sums.v1, sums.v2);
+        let checksums = accuraterip::checksums(&audio, position + 1, audio_count);
+        let verdict = accuraterip::verify(pressings.as_deref(), position, checksums);
+        println!("\r{label}  {}", log::verdict_text(verdict));
+
+        cue_tracks.push(cue::TrackFile {
+            index,
+            file_name: file_name.clone(),
+            pregap: subcode.pregaps[index],
+            isrc: isrc.clone(),
+        });
+        track_logs.push(log::TrackLog {
+            number: track.number,
+            file_name,
+            pregap: subcode.pregaps[index],
+            isrc,
+            peak: log::peak_level(&audio),
+            crc: log::copy_crc(&audio),
+            checksums,
+            verdict,
+        });
     }
 
+    let base_name = album_dir.file_name().unwrap().to_string_lossy().into_owned();
+    let rip_log = log::RipLog {
+        date: SystemTime::now(),
+        drive: &info,
+        offset,
+        format: args.format.extension(),
+        toc: &toc,
+        release: release.as_ref(),
+        mcn: subcode.mcn.as_deref(),
+        accuraterip_sets: pressings.as_ref().map(Vec::len),
+        tracks: &track_logs,
+    };
+    let log_path = album_dir.join(format!("{base_name}.log"));
+    fs::write(&log_path, rip_log.render()).with_context(|| format!("cannot write {}", log_path.display()))?;
+    // A cue sheet of part of the disc would describe a disc that does not exist.
+    if cue_tracks.len() == audio_count {
+        let sheet = cue::cue_sheet(&toc, release.as_ref(), subcode.mcn.as_deref(), &cue_tracks);
+        let cue_path = album_dir.join(format!("{base_name}.cue"));
+        fs::write(&cue_path, sheet).with_context(|| format!("cannot write {}", cue_path.display()))?;
+    }
+
+    let accurate = track_logs.iter().filter(|t| matches!(t.verdict, Verdict::Accurate { .. })).count();
     println!();
-    println!("{accurate}/{ripped} track(s) accurately ripped in {:.0} s", started.elapsed().as_secs_f32());
+    println!(
+        "{accurate}/{} track(s) accurately ripped in {:.0} s",
+        track_logs.len(),
+        started.elapsed().as_secs_f32()
+    );
     Ok(())
+}
+
+/// What the sub-channel tells about the disc, beyond the TOC.
+struct Subcode {
+    mcn: Option<String>,
+    /// Per entry of `toc.tracks`.
+    isrcs: Vec<Option<String>>,
+    pregaps: Vec<u32>,
+}
+
+/// Some drives do not support these commands: the rip goes on without them.
+fn read_subcode(drive: &mut Drive, toc: &Toc) -> Subcode {
+    let warn = |what: &str, e: &dyn std::fmt::Display| println!("\rWarning  cannot read {what}: {e}");
+    let mcn = drive.read_mcn().unwrap_or_else(|e| {
+        warn("the MCN", &e);
+        None
+    });
+    let isrcs = toc
+        .tracks
+        .iter()
+        .map(|t| if t.is_audio { drive.read_isrc(t.number).ok().flatten() } else { None })
+        .collect();
+    let pregaps = gaps::detect_pregaps(toc, &mut |lba| drive.read_q(lba)).unwrap_or_else(|e| {
+        warn("pregaps", &e);
+        vec![0; toc.tracks.len()]
+    });
+    Subcode { mcn, isrcs, pregaps }
 }
 
 /// Downloads the front cover and saves it next to the tracks. A missing cover

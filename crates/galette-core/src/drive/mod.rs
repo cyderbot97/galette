@@ -64,6 +64,28 @@ impl Drive {
         mmc::parse_toc(&buf[..len])
     }
 
+    /// Position of the laser over `lba` according to the Q sub-channel, or
+    /// `None` if this sector's Q frame does not carry a position.
+    pub fn read_q(&mut self, lba: u32) -> Result<Option<mmc::QPosition>> {
+        let mut buf = vec![0u8; SECTOR_BYTES + mmc::Q_LEN];
+        let len = self.transport.read(&mmc::read_cd_q_cdb(lba), &mut buf, Duration::from_secs(10))?;
+        Ok(buf.get(SECTOR_BYTES..len).and_then(mmc::parse_q))
+    }
+
+    /// Media Catalog Number of the disc, if it has one.
+    pub fn read_mcn(&mut self) -> Result<Option<String>> {
+        let mut buf = [0u8; mmc::SUB_CHANNEL_LEN];
+        let len = self.transport.read(&mmc::read_mcn_cdb(), &mut buf, Duration::from_secs(10))?;
+        Ok(mmc::parse_mcn(&buf[..len]))
+    }
+
+    /// ISRC of a track, if it has one.
+    pub fn read_isrc(&mut self, track: u8) -> Result<Option<String>> {
+        let mut buf = [0u8; mmc::SUB_CHANNEL_LEN];
+        let len = self.transport.read(&mmc::read_isrc_cdb(track), &mut buf, Duration::from_secs(10))?;
+        Ok(mmc::parse_isrc(&buf[..len]))
+    }
+
     /// Reads `count` audio sectors starting at `lba` into `buf`
     /// (which must hold `count * SECTOR_BYTES` bytes).
     ///

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 base64 = "0.23.1"
 claxon = "0.4.3"
+crc32fast = "1.5.3"
 flacenc = "0.5.1"
 metaflac = "0.2.8"
 serde = { version = "1.0.229", features = ["derive"] }

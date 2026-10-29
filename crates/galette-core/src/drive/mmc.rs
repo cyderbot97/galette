@@ -6,6 +6,7 @@ use crate::toc::{Toc, Track};
 use crate::{Error, Result};
 
 const INQUIRY: u8 = 0x12;
+const READ_SUB_CHANNEL: u8 = 0x42;
 const READ_TOC: u8 = 0x43;
 const READ_CD: u8 = 0xBE;
 
@@ -44,6 +45,18 @@ pub fn read_toc_cdb(alloc_len: usize) -> [u8; 10] {
 
 /// READ CD of `count` CD-DA sectors from `lba`, user data only (2352 bytes each).
 pub fn read_cd_cdb(lba: u32, count: u32) -> [u8; 12] {
+    read_cd(lba, count, 0)
+}
+
+/// Bytes of formatted Q sub-channel appended to each sector by [`read_cd_q_cdb`].
+pub const Q_LEN: usize = 16;
+
+/// READ CD of one sector followed by its formatted Q sub-channel.
+pub fn read_cd_q_cdb(lba: u32) -> [u8; 12] {
+    read_cd(lba, 1, 0b010)
+}
+
+fn read_cd(lba: u32, count: u32, subchannel: u8) -> [u8; 12] {
     let lba = lba.to_be_bytes();
     let count = count.to_be_bytes();
     [
@@ -57,9 +70,69 @@ pub fn read_cd_cdb(lba: u32, count: u32) -> [u8; 12] {
         count[2],
         count[3],
         0x10, // user data, no headers
-        0,    // no sub-channel
+        subchannel,
         0,
     ]
+}
+
+/// Position given by a Q sub-channel frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QPosition {
+    pub track: u8,
+    /// 0 in a track's pregap, 1 or more in the track itself.
+    pub index: u8,
+}
+
+/// Decodes formatted Q: CONTROL/ADR, track and index in BCD, then times.
+/// Only ADR 1 frames carry a position; about 1 % of the frames carry the MCN
+/// or ISRC instead, and give `None`.
+pub fn parse_q(q: &[u8]) -> Option<QPosition> {
+    if q.len() < 3 || q[0] & 0x0F != 1 {
+        return None;
+    }
+    Some(QPosition { track: from_bcd(q[1])?, index: from_bcd(q[2])? })
+}
+
+fn from_bcd(byte: u8) -> Option<u8> {
+    let (high, low) = (byte >> 4, byte & 0x0F);
+    (high < 10 && low < 10).then_some(high * 10 + low)
+}
+
+pub const SUB_CHANNEL_LEN: usize = 24;
+const MCN_FORMAT: u8 = 0x02;
+const ISRC_FORMAT: u8 = 0x03;
+
+/// READ SUB-CHANNEL asking for the Media Catalog Number (the disc's barcode).
+pub fn read_mcn_cdb() -> [u8; 10] {
+    read_sub_channel(MCN_FORMAT, 0)
+}
+
+/// READ SUB-CHANNEL asking for the ISRC of `track`.
+pub fn read_isrc_cdb(track: u8) -> [u8; 10] {
+    read_sub_channel(ISRC_FORMAT, track)
+}
+
+fn read_sub_channel(format: u8, track: u8) -> [u8; 10] {
+    [READ_SUB_CHANNEL, 0, 0x40, format, 0, 0, track, 0, SUB_CHANNEL_LEN as u8, 0]
+}
+
+/// The MCN: 13 digits at byte 9, valid if bit 7 of byte 8 (MCVAL) is set.
+pub fn parse_mcn(data: &[u8]) -> Option<String> {
+    sub_channel_code(data, 13).filter(|c| c.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The ISRC: 12 characters at byte 9, valid if bit 7 of byte 8 (TCVAL) is set.
+pub fn parse_isrc(data: &[u8]) -> Option<String> {
+    sub_channel_code(data, 12).filter(|c| c.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+fn sub_channel_code(data: &[u8], len: usize) -> Option<String> {
+    if data.len() < 9 + len || data[8] & 0x80 == 0 {
+        return None;
+    }
+    let code = std::str::from_utf8(&data[9..9 + len]).ok()?;
+    // Some discs flag an all-zero code as valid.
+    (!code.bytes().all(|b| b == b'0')).then(|| code.to_string())
 }
 
 pub fn parse_toc(data: &[u8]) -> Result<Toc> {
@@ -120,6 +193,33 @@ mod tests {
         assert_eq!(info.vendor, "ASUS");
         assert_eq!(info.product, "SDRW-08U9M-U");
         assert_eq!(info.revision, "A112");
+    }
+
+    #[test]
+    fn parses_q_sub_channel() {
+        // Track 2, index 1, as read on a real disc.
+        let q = [0x01, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x05, 0x25, 0x60, 0x6f, 0x4b, 0, 0, 0, 0x80];
+        assert_eq!(parse_q(&q), Some(QPosition { track: 2, index: 1 }));
+        // Pregap of track 10.
+        assert_eq!(parse_q(&[0x01, 0x10, 0x00]), Some(QPosition { track: 10, index: 0 }));
+        // ADR 2 (MCN) frame.
+        assert_eq!(parse_q(&[0x02, 0x00, 0x93]), None);
+    }
+
+    #[test]
+    fn parses_mcn_and_isrc() {
+        let mcn = hex("001500140200000080303039333632343934333039390008");
+        assert_eq!(parse_mcn(&mcn).as_deref(), Some("0093624943099"));
+        let isrc = hex("001500140330010080555357423131333032343930000800");
+        assert_eq!(parse_isrc(&isrc).as_deref(), Some("USWB11302490"));
+
+        let mut invalid = isrc.clone();
+        invalid[8] = 0;
+        assert_eq!(parse_isrc(&invalid), None);
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
     #[test]

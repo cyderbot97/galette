@@ -8,7 +8,8 @@ vérifie le résultat avec AccurateRip et produit des fichiers FLAC correctement
 
 > État : début de développement. Sous Linux, Galette reconnaît le CD sur MusicBrainz,
 > l'extrait avec correction du décalage du lecteur, vérifie chaque piste avec
-> AccurateRip et produit des FLAC tagués avec leur pochette. Pas encore de mode sécurisé.
+> AccurateRip et produit des FLAC tagués avec leur pochette, un fichier `.cue`
+> (pré-gaps, ISRC, MCN) et un log. Pas encore de mode sécurisé.
 
 ## Essayer
 
@@ -35,9 +36,13 @@ crates/
     src/accuraterip.rs sommes de contrôle v1/v2, base de décalages des lecteurs
     src/flac.rs        encodage FLAC (vérifié par décodage), tags et pochette intégrés
     src/tags.rs        tags au format de MusicBrainz Picard
+    src/gaps.rs        détection des pré-gaps par le sous-canal Q
+    src/cue.rs         fichier .cue (un fichier par piste, pré-gaps en fin de piste précédente)
+    src/log.rs         log de rip
     src/wav.rs         écriture des fichiers WAV
     src/drive/         accès au lecteur
-      mmc.rs           commandes MMC (READ TOC, READ CD), communes à tous les OS
+      mmc.rs           commandes MMC (INQUIRY, READ TOC, READ CD, READ SUB-CHANNEL),
+                       communes à tous les OS
       linux.rs         envoi des commandes via l'ioctl SG_IO
     src/metadata/      métadonnées (MusicBrainz) et pochettes (Cover Art Archive)
   galette-cli/         interface en ligne de commande
@@ -57,7 +62,7 @@ une commande SCSI au lecteur.
 - [x] Vérification AccurateRip (CRC v1 / v2)
 - [ ] Mode sécurisé : relectures, purge du cache, erreurs C2
 - [x] Encodage FLAC + tags + pochette (Cover Art Archive)
-- [ ] Fichier `.cue`, log de rip
+- [x] Fichier `.cue` (pré-gaps, ISRC, MCN), log de rip
 - [ ] Application graphique (Tauri)
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), macOS (IOKit)
-- [ ] CTDB (vérification et réparation), pré-gaps, HTOA, CD-Text
+- [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation
