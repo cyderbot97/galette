@@ -6,6 +6,7 @@ use crate::toc::{Toc, Track};
 use crate::{Error, Result};
 
 const INQUIRY: u8 = 0x12;
+const MODE_SENSE_10: u8 = 0x5A;
 const READ_SUB_CHANNEL: u8 = 0x42;
 const READ_TOC: u8 = 0x43;
 const READ_CD: u8 = 0xBE;
@@ -46,6 +47,49 @@ pub fn read_toc_cdb(alloc_len: usize) -> [u8; 10] {
 /// READ CD of `count` CD-DA sectors from `lba`, user data only (2352 bytes each).
 pub fn read_cd_cdb(lba: u32, count: u32) -> [u8; 12] {
     read_cd(lba, count, 0)
+}
+
+/// Bytes of C2 error pointers per sector: one bit per byte of audio.
+pub const C2_LEN: usize = 294;
+
+/// READ CD of `count` CD-DA sectors, each followed by its C2 error pointers.
+pub fn read_cd_c2_cdb(lba: u32, count: u32) -> [u8; 12] {
+    let mut cdb = read_cd(lba, count, 0);
+    cdb[9] |= 0b01 << 1; // C2 error bits
+    cdb
+}
+
+/// What a drive can do, from the "CD/DVD capabilities" mode page (2Ah).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    /// The drive can report the bytes it could not correct (C2 errors).
+    pub c2_pointers: bool,
+    /// The drive can restart reading audio exactly at the requested sector.
+    pub accurate_stream: bool,
+    /// Size of the read cache in KiB.
+    pub buffer_kib: u16,
+}
+
+pub const CAPABILITIES_LEN: usize = 64;
+const CAPABILITIES_PAGE: u8 = 0x2A;
+
+/// MODE SENSE (10) of the capabilities page, without block descriptors.
+pub fn mode_sense_capabilities_cdb() -> [u8; 10] {
+    let len = (CAPABILITIES_LEN as u16).to_be_bytes();
+    [MODE_SENSE_10, 0x08, CAPABILITIES_PAGE, 0, 0, 0, 0, len[0], len[1], 0]
+}
+
+pub fn parse_capabilities(data: &[u8]) -> Option<Capabilities> {
+    let descriptors = u16::from_be_bytes([*data.get(6)?, *data.get(7)?]) as usize;
+    let page = data.get(8 + descriptors..)?;
+    if page.len() < 14 || page[0] & 0x3F != CAPABILITIES_PAGE {
+        return None;
+    }
+    Some(Capabilities {
+        c2_pointers: page[5] & 0x10 != 0,
+        accurate_stream: page[5] & 0x02 != 0,
+        buffer_kib: u16::from_be_bytes([page[12], page[13]]),
+    })
 }
 
 /// Bytes of formatted Q sub-channel appended to each sector by [`read_cd_q_cdb`].
@@ -223,8 +267,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_capabilities() {
+        // As returned by an ASUS SDRW-08U9M-U.
+        let data = hex("004a0200000000002a423f37f1772b23108a0100030006e40010108a108a0001");
+        let caps = parse_capabilities(&data).unwrap();
+        assert_eq!(caps, Capabilities { c2_pointers: true, accurate_stream: true, buffer_kib: 768 });
+    }
+
+    #[test]
     fn read_cd_encodes_address() {
         let cdb = read_cd_cdb(0x0001_0203, 27);
         assert_eq!(&cdb[2..9], &[0, 1, 2, 3, 0, 0, 27]);
+        assert_eq!(read_cd_c2_cdb(0, 1)[9], 0x12);
     }
 }

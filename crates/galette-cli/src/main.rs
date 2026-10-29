@@ -58,6 +58,11 @@ struct RipArgs {
     #[arg(short, long, value_enum, default_value_t = Format::Flac)]
     format: Format,
 
+    /// Burst reads each sector once; secure re-reads until the audio is
+    /// proven by AccurateRip or confirmed by identical reads.
+    #[arg(short, long, value_enum, default_value_t = ReadMode::Secure)]
+    mode: ReadMode,
+
     /// Read offset of the drive in samples. Looked up in the AccurateRip
     /// database when not given.
     #[arg(long, allow_hyphen_values = true)]
@@ -82,6 +87,12 @@ enum Format {
     Flac,
     /// Uncompressed, without any metadata.
     Wav,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ReadMode {
+    Burst,
+    Secure,
 }
 
 impl Format {
@@ -167,6 +178,18 @@ fn rip(args: &RipArgs) -> Result<()> {
     let info = drive.info().context("cannot identify the drive")?;
     let toc = read_toc(&mut drive, device)?;
     println!("Drive    {} {} ({})", info.vendor, info.product, info.revision);
+    let caps = drive.capabilities().ok().flatten();
+    let c2 = caps.is_some_and(|c| c.c2_pointers);
+    let read_mode = match args.mode {
+        ReadMode::Burst => "burst (single read)".to_string(),
+        ReadMode::Secure => format!(
+            "secure ({}, up to {} re-reads, {} identical reads required)",
+            if c2 { "C2 pointers" } else { "no C2 pointers" },
+            rip::MAX_REREADS,
+            rip::REQUIRED_MATCHES
+        ),
+    };
+    println!("Mode     {read_mode}");
 
     let offset = match args.offset {
         Some(offset) => offset,
@@ -243,17 +266,37 @@ fn rip(args: &RipArgs) -> Result<()> {
         let label = format!("{:>2}. {title}", track.number);
         let isrc = subcode.isrcs[index].clone();
 
-        let audio = rip::read_track(&mut drive, &toc, index, offset, &mut |done| {
-            print!("\r{label}  {:>3}%", (done * 100.0) as u32);
+        let options = rip::Options {
+            mode: match args.mode {
+                ReadMode::Burst => rip::Mode::Burst,
+                ReadMode::Secure => rip::Mode::Secure,
+            },
+            offset,
+            c2,
+            cache_kib: caps.map_or(0, |c| c.buffer_kib as u32),
+        };
+        let mut is_accurate = |audio: &[u8]| {
+            let sums = accuraterip::checksums(audio, position + 1, audio_count);
+            matches!(accuraterip::verify(pressings.as_deref(), position, sums), Verdict::Accurate { .. })
+        };
+        let read = rip::read_track(&mut drive, &toc, index, options, &mut is_accurate, &mut |p| {
+            match p {
+                rip::Progress::Reading(f) => print!("\r{label}  reading {:>3}%   ", (f * 100.0) as u32),
+                rip::Progress::Verifying(f) => print!("\r{label}  verifying {:>3}%   ", (f * 100.0) as u32),
+                rip::Progress::Rereading { attempt, sectors } => {
+                    print!("\r{label}  re-reading {sectors} sector(s), round {attempt}/{}   ", rip::MAX_REREADS)
+                }
+            }
             std::io::stdout().flush().ok();
         })
         .with_context(|| format!("cannot read track {}", track.number))?;
+        let audio = read.audio;
 
         let file_name = format!("{:02} - {}.{}", track.number, sanitize(&title), args.format.extension());
         let path = album_dir.join(&file_name);
         match args.format {
             Format::Flac => {
-                print!("\r{label}  encoding");
+                print!("\r{label}  encoding\x1b[K");
                 std::io::stdout().flush().ok();
                 let mut tags = tags::vorbis_comments(release.as_ref(), track.number as u32, audio_count as u32, &disc_id);
                 if let Some(isrc) = &isrc {
@@ -273,7 +316,7 @@ fn rip(args: &RipArgs) -> Result<()> {
 
         let checksums = accuraterip::checksums(&audio, position + 1, audio_count);
         let verdict = accuraterip::verify(pressings.as_deref(), position, checksums);
-        println!("\r{label}  {}", log::verdict_text(verdict));
+        println!("\r{label}  {}  [{}]\x1b[K", log::verdict_text(verdict), log::read_summary(&read.report));
 
         cue_tracks.push(cue::TrackFile {
             index,
@@ -283,6 +326,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         });
         track_logs.push(log::TrackLog {
             number: track.number,
+            start: track.start,
             file_name,
             pregap: subcode.pregaps[index],
             isrc,
@@ -290,6 +334,7 @@ fn rip(args: &RipArgs) -> Result<()> {
             crc: log::copy_crc(&audio),
             checksums,
             verdict,
+            read: read.report,
         });
     }
 
@@ -298,6 +343,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         date: SystemTime::now(),
         drive: &info,
         offset,
+        read_mode: &read_mode,
         format: args.format.extension(),
         toc: &toc,
         release: release.as_ref(),
@@ -305,7 +351,14 @@ fn rip(args: &RipArgs) -> Result<()> {
         accuraterip_sets: pressings.as_ref().map(Vec::len),
         tracks: &track_logs,
     };
-    let log_path = album_dir.join(format!("{base_name}.log"));
+    // A partial rip must not replace the log of the full one.
+    let log_name = if track_logs.len() == audio_count {
+        format!("{base_name}.log")
+    } else {
+        let numbers: Vec<String> = track_logs.iter().map(|t| t.number.to_string()).collect();
+        format!("{base_name} (tracks {}).log", numbers.join(", "))
+    };
+    let log_path = album_dir.join(log_name);
     fs::write(&log_path, rip_log.render()).with_context(|| format!("cannot write {}", log_path.display()))?;
     // A cue sheet of part of the disc would describe a disc that does not exist.
     if cue_tracks.len() == audio_count {

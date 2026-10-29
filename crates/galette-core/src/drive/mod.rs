@@ -58,6 +58,13 @@ impl Drive {
         mmc::parse_inquiry(&buf[..len])
     }
 
+    /// `None` if the drive does not describe its capabilities.
+    pub fn capabilities(&mut self) -> Result<Option<mmc::Capabilities>> {
+        let mut buf = [0u8; mmc::CAPABILITIES_LEN];
+        let len = self.transport.read(&mmc::mode_sense_capabilities_cdb(), &mut buf, Duration::from_secs(5))?;
+        Ok(mmc::parse_capabilities(&buf[..len]))
+    }
+
     pub fn read_toc(&mut self) -> Result<Toc> {
         let mut buf = vec![0u8; mmc::TOC_BUFFER_LEN];
         let len = self.transport.read(&mmc::read_toc_cdb(buf.len()), &mut buf, Duration::from_secs(10))?;
@@ -88,12 +95,19 @@ impl Drive {
 
     /// Reads `count` audio sectors starting at `lba` into `buf`
     /// (which must hold `count * SECTOR_BYTES` bytes).
-    ///
-    /// This is a single raw read: no offset correction and no re-reads yet.
     pub fn read_audio(&mut self, lba: u32, count: u32, buf: &mut [u8]) -> Result<()> {
-        let expected = count as usize * SECTOR_BYTES;
+        self.read_sectors(&mmc::read_cd_cdb(lba, count), count as usize * SECTOR_BYTES, buf)
+    }
+
+    /// Like [`Drive::read_audio`], each sector being followed by its
+    /// [`mmc::C2_LEN`] bytes of C2 error pointers.
+    pub fn read_audio_c2(&mut self, lba: u32, count: u32, buf: &mut [u8]) -> Result<()> {
+        self.read_sectors(&mmc::read_cd_c2_cdb(lba, count), count as usize * (SECTOR_BYTES + mmc::C2_LEN), buf)
+    }
+
+    fn read_sectors(&mut self, cdb: &[u8], expected: usize, buf: &mut [u8]) -> Result<()> {
         assert_eq!(buf.len(), expected, "buffer size must match sector count");
-        let len = self.transport.read(&mmc::read_cd_cdb(lba, count), buf, Duration::from_secs(30))?;
+        let len = self.transport.read(cdb, buf, Duration::from_secs(30))?;
         if len != expected {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,

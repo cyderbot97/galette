@@ -8,12 +8,15 @@ use crate::accuraterip::{Checksums, Verdict};
 use crate::drive::DriveInfo;
 use crate::ids::{self, AccurateRipId};
 use crate::metadata::Release;
+use crate::rip::ReadReport;
 use crate::toc::{self, Toc};
 
 pub struct RipLog<'a> {
     pub date: SystemTime,
     pub drive: &'a DriveInfo,
     pub offset: i32,
+    /// How the disc was read, e.g. "secure, C2 pointers".
+    pub read_mode: &'a str,
     pub format: &'a str,
     pub toc: &'a Toc,
     pub release: Option<&'a Release>,
@@ -25,6 +28,8 @@ pub struct RipLog<'a> {
 
 pub struct TrackLog {
     pub number: u8,
+    /// First sector of the track.
+    pub start: u32,
     pub file_name: String,
     pub pregap: u32,
     pub isrc: Option<String>,
@@ -34,6 +39,7 @@ pub struct TrackLog {
     pub crc: u32,
     pub checksums: Checksums,
     pub verdict: Verdict,
+    pub read: ReadReport,
 }
 
 /// Highest absolute sample value of CD audio, from 0 to 1.
@@ -66,7 +72,7 @@ impl RipLog<'_> {
         line(String::new());
         line(format!("Drive                {} {} ({})", self.drive.vendor, self.drive.product, self.drive.revision));
         line(format!("Read offset          {:+} samples", self.offset));
-        line("Read mode            burst (single read, no re-reads)".to_string());
+        line(format!("Read mode            {}", self.read_mode));
         line(format!("Output format        {}", self.format));
         line(String::new());
 
@@ -97,6 +103,18 @@ impl RipLog<'_> {
             line(format!("  File               {}", t.file_name));
             line(format!("  Pregap             {}", toc::format_msf(t.pregap)));
             line(format!("  ISRC               {}", t.isrc.clone().unwrap_or_else(none)));
+            line(format!("  Read               {}", read_summary(&t.read)));
+            for (label, lbas) in [("Suspicious", &t.read.suspicious), ("Unreadable", &t.read.unreadable)] {
+                for range in ranges(lbas) {
+                    let position = |lba: u32| toc::format_msf(lba.saturating_sub(t.start));
+                    if range.len() == 1 {
+                        line(format!("  {label}         {}", position(range.start)));
+                    } else {
+                        let end = position(range.end - 1);
+                        line(format!("  {label}         {} - {end} ({} sectors)", position(range.start), range.len()));
+                    }
+                }
+            }
             line(format!("  Peak level         {:.1} %", t.peak * 100.0));
             line(format!("  Copy CRC           {:08X}", t.crc));
             line(format!("  AccurateRip v1     {:08X}", t.checksums.v1));
@@ -105,6 +123,12 @@ impl RipLog<'_> {
             line(String::new());
         }
 
+        let damaged = self.tracks.iter().filter(|t| !t.read.is_clean()).count();
+        if damaged == 0 {
+            line("No read errors.".to_string());
+        } else {
+            line(format!("{damaged} track(s) with suspicious or unreadable positions."));
+        }
         let accurate = self.tracks.iter().filter(|t| matches!(t.verdict, Verdict::Accurate { .. })).count();
         match self.accuraterip_sets {
             None => line("The disc is not in the AccurateRip database: the rip could not be verified.".to_string()),
@@ -117,12 +141,47 @@ impl RipLog<'_> {
     }
 }
 
+pub fn read_summary(read: &ReadReport) -> String {
+    let mut parts = vec![if read.passes == 1 { "1 pass".to_string() } else { format!("{} passes", read.passes) }];
+    if read.c2_sectors > 0 {
+        parts.push(format!("{} sector(s) with C2 errors", read.c2_sectors));
+    }
+    if read.mismatches > 0 {
+        parts.push(format!("{} sector(s) read differently", read.mismatches));
+    }
+    if read.rereads > 0 {
+        parts.push(format!("{} re-read(s)", read.rereads));
+    }
+    if !read.suspicious.is_empty() {
+        parts.push(format!("{} SUSPICIOUS", read.suspicious.len()));
+    }
+    if !read.unreadable.is_empty() {
+        parts.push(format!("{} UNREADABLE", read.unreadable.len()));
+    }
+    if read.cleared_by_accuraterip > 0 {
+        parts.push(format!("{} uncertain sector(s) proven right by AccurateRip", read.cleared_by_accuraterip));
+    }
+    parts.join(", ")
+}
+
 pub fn verdict_text(verdict: Verdict) -> String {
     match verdict {
         Verdict::Accurate { version, confidence } => format!("accurately ripped (v{version}, confidence {confidence})"),
         Verdict::Mismatch => "NOT ACCURATE: no matching checksum in AccurateRip".to_string(),
         Verdict::Unknown => "not verified".to_string(),
     }
+}
+
+/// Groups sorted LBAs into ranges of consecutive sectors.
+fn ranges(lbas: &[u32]) -> Vec<std::ops::Range<u32>> {
+    let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();
+    for &lba in lbas {
+        match ranges.last_mut() {
+            Some(range) if range.end == lba => range.end += 1,
+            _ => ranges.push(lba..lba + 1),
+        }
+    }
+    ranges
 }
 
 /// `YYYY-MM-DD hh:mm:ss UTC`, without pulling in a date library.
@@ -156,6 +215,12 @@ mod tests {
         assert_eq!(format_utc(UNIX_EPOCH), "1970-01-01 00:00:00 UTC");
         // 2024-02-29 12:34:56, a leap day.
         assert_eq!(format_utc(UNIX_EPOCH + Duration::from_secs(1_709_210_096)), "2024-02-29 12:34:56 UTC");
+    }
+
+    #[test]
+    fn groups_positions() {
+        assert_eq!(ranges(&[3, 4, 5, 9, 20, 21]), [3..6, 9..10, 20..22]);
+        assert!(ranges(&[]).is_empty());
     }
 
     #[test]
