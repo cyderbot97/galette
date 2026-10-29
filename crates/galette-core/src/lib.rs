@@ -15,6 +15,7 @@ mod http;
 pub mod ids;
 pub mod log;
 pub mod metadata;
+pub mod naming;
 pub mod rip;
 pub mod session;
 pub mod tags;

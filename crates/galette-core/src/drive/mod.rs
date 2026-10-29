@@ -23,6 +23,15 @@ pub trait Transport: Send {
     fn read(&mut self, cdb: &[u8], buf: &mut [u8], timeout: Duration) -> Result<usize>;
 }
 
+/// Whether there is a disc to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaState {
+    Ready,
+    /// A disc is being loaded, or was just changed.
+    Loading,
+    NoDisc,
+}
+
 /// Identity of a drive, as reported by INQUIRY.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriveInfo {
@@ -65,6 +74,18 @@ impl Drive {
         let mut buf = [0u8; mmc::CAPABILITIES_LEN];
         let len = self.transport.read(&mmc::mode_sense_capabilities_cdb(), &mut buf, Duration::from_secs(5))?;
         Ok(mmc::parse_capabilities(&buf[..len]))
+    }
+
+    /// Asks the drive whether a disc is ready, with TEST UNIT READY: a
+    /// command quick enough to be sent every second or two.
+    pub fn media_state(&mut self) -> Result<MediaState> {
+        match self.transport.read(&mmc::test_unit_ready_cdb(), &mut [], Duration::from_secs(5)) {
+            Ok(_) => Ok(MediaState::Ready),
+            Err(Error::Scsi(e)) if e.is_no_medium() => Ok(MediaState::NoDisc),
+            // "Becoming ready", "medium may have changed"…
+            Err(Error::Scsi(_)) => Ok(MediaState::Loading),
+            Err(e) => Err(e),
+        }
     }
 
     /// Unlocks the tray and opens it.

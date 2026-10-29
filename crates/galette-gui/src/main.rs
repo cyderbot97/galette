@@ -1,13 +1,16 @@
 //! Galette's desktop application: a Tauri window whose page (in `ui/`) calls
 //! the commands below. Everything slow runs in a background thread, so the
-//! window stays responsive; rips report their progress as `rip` events.
+//! window stays responsive; rips report their progress as `rip` events, and
+//! a watcher thread reports discs being inserted or removed as `drive` events.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -15,9 +18,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use galette_core::accuraterip::Verdict;
-use galette_core::drive::Drive;
+use galette_core::drive::{Drive, MediaState};
 use galette_core::metadata::Release;
 use galette_core::metadata::coverart::{self, CoverArt};
+use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
 use galette_core::{ids, log, toc};
@@ -27,8 +31,72 @@ struct Shared {
     disc: Mutex<Option<Disc>>,
     /// Covers already downloaded, by release id.
     covers: Mutex<HashMap<String, Option<CoverArt>>>,
+    prefs: Mutex<Prefs>,
+    prefs_path: Mutex<Option<PathBuf>>,
     ripping: AtomicBool,
+    scanning: AtomicBool,
     cancel: Arc<AtomicBool>,
+}
+
+/// The user's settings, saved as JSON in the application's config folder.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct Prefs {
+    output: PathBuf,
+    format: Format,
+    secure: bool,
+    naming: Naming,
+    /// Read offset given by hand; `None` to take it from AccurateRip.
+    offset: Option<i32>,
+    c2: bool,
+    embed_cover: bool,
+    save_cover: bool,
+    eject_after: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            output: PathBuf::new(),
+            format: Format::Flac,
+            secure: true,
+            naming: Naming::default(),
+            offset: None,
+            c2: true,
+            embed_cover: true,
+            save_cover: true,
+            eject_after: false,
+        }
+    }
+}
+
+#[tauri::command]
+fn get_prefs(state: State<'_, AppState>) -> Prefs {
+    state.prefs.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn save_prefs(state: State<'_, AppState>, prefs: Prefs) -> CommandResult<()> {
+    if let Some(path) = state.prefs_path.lock().unwrap().as_ref() {
+        let json = serde_json::to_string_pretty(&prefs).map_err(|e| e.to_string())?;
+        fs::create_dir_all(path.parent().unwrap()).and_then(|_| fs::write(path, json)).map_err(|e| e.to_string())?;
+    }
+    *state.prefs.lock().unwrap() = prefs;
+    Ok(())
+}
+
+/// Where the first track would be written with these templates.
+#[tauri::command]
+fn preview_naming(state: State<'_, AppState>, naming: Naming, release: Option<Release>) -> String {
+    let disc = state.disc.lock().unwrap();
+    let Some(disc) = disc.as_ref() else {
+        return String::new();
+    };
+    let format = state.prefs.lock().unwrap().format;
+    let first = disc.toc.audio_tracks().next().map_or(1, |t| t.number);
+    let folder = naming.folder(release.as_ref(), &disc.toc);
+    let file = naming.file(release.as_ref(), &disc.toc, first);
+    folder.join(format!("{file}.{}", format.extension())).display().to_string()
 }
 
 type AppState = Arc<Shared>;
@@ -63,33 +131,40 @@ struct TrackView {
 async fn scan(state: State<'_, AppState>) -> CommandResult<DiscView> {
     let state = Arc::clone(&state);
     blocking(move || {
-        let mut drive = Drive::open(None).map_err(|e| e.to_string())?;
-        let mut disc = Disc::read(&mut drive).map_err(|e| e.to_string())?;
-        let warning = disc.lookup().err().map(|e| format!("Recherche en ligne impossible : {e}"));
-        let view = DiscView {
-            drive: format!("{} {}", disc.drive.vendor, disc.drive.product),
-            c2: disc.c2(),
-            offset: disc.offset,
-            disc_id: ids::musicbrainz(&disc.toc),
-            accuraterip: disc.accuraterip.as_ref().map(Vec::len),
-            tracks: disc
-                .toc
-                .tracks
-                .iter()
-                .enumerate()
-                .map(|(i, t)| TrackView {
-                    number: t.number,
-                    length: duration(disc.toc.track_sectors(i)),
-                    is_audio: t.is_audio,
-                })
-                .collect(),
-            releases: disc.releases.clone(),
-            warning,
-        };
-        *state.disc.lock().unwrap() = Some(disc);
-        Ok(view)
+        state.scanning.store(true, Ordering::SeqCst);
+        let result = read_disc(&state);
+        state.scanning.store(false, Ordering::SeqCst);
+        result
     })
     .await
+}
+
+fn read_disc(state: &Shared) -> CommandResult<DiscView> {
+    let mut drive = Drive::open(None).map_err(|e| e.to_string())?;
+    let mut disc = Disc::read(&mut drive).map_err(|e| e.to_string())?;
+    let warning = disc.lookup().err().map(|e| format!("Recherche en ligne impossible : {e}"));
+    let view = DiscView {
+        drive: format!("{} {}", disc.drive.vendor, disc.drive.product),
+        c2: disc.c2(),
+        offset: disc.offset,
+        disc_id: ids::musicbrainz(&disc.toc),
+        accuraterip: disc.accuraterip.as_ref().map(Vec::len),
+        tracks: disc
+            .toc
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| TrackView {
+                number: t.number,
+                length: duration(disc.toc.track_sectors(i)),
+                is_audio: t.is_audio,
+            })
+            .collect(),
+        releases: disc.releases.clone(),
+        warning,
+    };
+    *state.disc.lock().unwrap() = Some(disc);
+    Ok(view)
 }
 
 /// The front cover of a release, as a `data:` URL for the page.
@@ -120,10 +195,6 @@ struct RipRequest {
     /// The release as shown, with the user's edits.
     release: Option<Release>,
     tracks: Vec<u8>,
-    output: PathBuf,
-    format: Format,
-    secure: bool,
-    offset: Option<i32>,
 }
 
 /// What the page receives while ripping.
@@ -143,24 +214,26 @@ enum RipEvent {
 #[tauri::command]
 fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) -> CommandResult<()> {
     let disc = state.disc.lock().unwrap().clone().ok_or("Aucun disque analysé")?;
-    let offset = request.offset.or(disc.offset).ok_or(
-        "Ce lecteur n'est pas dans la base d'AccurateRip : indiquez son décalage de lecture.",
+    let prefs = state.prefs.lock().unwrap().clone();
+    let offset = prefs.offset.or(disc.offset).ok_or(
+        "Ce lecteur n'est pas dans la base d'AccurateRip : indiquez son décalage dans les réglages.",
     )?;
     if state.ripping.swap(true, Ordering::SeqCst) {
         return Err("Un rip est déjà en cours".into());
     }
     state.cancel.store(false, Ordering::SeqCst);
-    let cover = match (&request.release, request.format) {
-        (Some(r), Format::Flac) => state.covers.lock().unwrap().get(&r.id).cloned().flatten(),
-        _ => None,
-    };
+    let cover = request.release.as_ref().and_then(|r| state.covers.lock().unwrap().get(&r.id).cloned().flatten());
     let settings = session::Settings {
-        output: request.output,
-        format: request.format,
-        mode: if request.secure { rip::Mode::Secure } else { rip::Mode::Burst },
+        output: prefs.output,
+        format: prefs.format,
+        mode: if prefs.secure { rip::Mode::Secure } else { rip::Mode::Burst },
         offset,
+        c2: prefs.c2,
+        naming: prefs.naming,
         release: request.release,
         cover,
+        embed_cover: prefs.embed_cover && prefs.format == Format::Flac,
+        save_cover: prefs.save_cover,
         tracks: request.tracks,
         cancel: Some(Arc::clone(&state.cancel)),
     };
@@ -177,6 +250,9 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
                 }
             })
         });
+        if result.is_ok() && prefs.eject_after {
+            let _ = Drive::open(None).and_then(|mut d| d.eject());
+        }
         state.ripping.store(false, Ordering::SeqCst);
         emit(match result {
             Ok(outcome) => RipEvent::Finished {
@@ -248,14 +324,50 @@ async fn eject(state: State<'_, AppState>) -> CommandResult<()> {
 }
 
 #[tauri::command]
-fn default_output(app: AppHandle) -> PathBuf {
-    let path = app.path();
-    path.audio_dir().or_else(|_| path.home_dir()).unwrap_or_default()
-}
-
-#[tauri::command]
 fn open_folder(app: AppHandle, path: String) -> CommandResult<()> {
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Polls the drive and sends a `drive` event ("ready", "loading", "empty" or
+/// "nodrive") whenever its state changes, so that inserted discs are read
+/// without the user asking. Leaves the drive alone while it is in use.
+fn watch_drive(app: AppHandle, state: AppState) {
+    let mut last = None;
+    loop {
+        std::thread::sleep(Duration::from_millis(1500));
+        if state.ripping.load(Ordering::SeqCst) || state.scanning.load(Ordering::SeqCst) {
+            continue;
+        }
+        let now = match Drive::open(None).and_then(|mut d| d.media_state()) {
+            Ok(MediaState::Ready) => "ready",
+            Ok(MediaState::Loading) => "loading",
+            Ok(MediaState::NoDisc) => "empty",
+            Err(_) => "nodrive",
+        };
+        if last.is_some_and(|last| last != now) {
+            if now != "ready" {
+                *state.disc.lock().unwrap() = None;
+            }
+            let _ = app.emit("drive", now);
+        }
+        last = Some(now);
+    }
+}
+
+/// Loads the settings, or makes them up on first launch.
+fn load_prefs(app: &AppHandle, state: &Shared) {
+    let path = app.path().app_config_dir().ok().map(|dir| dir.join("settings.json"));
+    let mut prefs: Prefs = path
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    if prefs.output.as_os_str().is_empty() {
+        let dirs = app.path();
+        prefs.output = dirs.audio_dir().or_else(|_| dirs.home_dir()).unwrap_or_default();
+    }
+    *state.prefs.lock().unwrap() = prefs;
+    *state.prefs_path.lock().unwrap() = path;
 }
 
 /// Runs blocking work (drive, network) off the window's threads.
@@ -274,14 +386,23 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
+        .setup(|app| {
+            let state = Arc::clone(&app.state::<AppState>());
+            load_prefs(app.handle(), &state);
+            let handle = app.handle().clone();
+            std::thread::spawn(move || watch_drive(handle, state));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             scan,
             cover,
             start_rip,
             cancel_rip,
             eject,
-            default_output,
-            open_folder
+            open_folder,
+            get_prefs,
+            save_prefs,
+            preview_naming
         ])
         .run(tauri::generate_context!())
         .expect("cannot start Galette");

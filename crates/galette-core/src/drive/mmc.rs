@@ -5,6 +5,7 @@ use super::DriveInfo;
 use crate::toc::{Toc, Track};
 use crate::{Error, Result};
 
+const TEST_UNIT_READY: u8 = 0x00;
 const INQUIRY: u8 = 0x12;
 const START_STOP_UNIT: u8 = 0x1B;
 const PREVENT_ALLOW_MEDIUM_REMOVAL: u8 = 0x1E;
@@ -20,6 +21,10 @@ const CONTROL_DATA: u8 = 0x04;
 
 /// Header + 99 tracks + lead-out, 8 bytes each.
 pub const TOC_BUFFER_LEN: usize = 4 + 100 * 8;
+
+pub fn test_unit_ready_cdb() -> [u8; 6] {
+    [TEST_UNIT_READY, 0, 0, 0, 0, 0]
+}
 
 /// PREVENT ALLOW MEDIUM REMOVAL, allowing it.
 pub fn allow_removal_cdb() -> [u8; 6] {

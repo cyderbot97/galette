@@ -28,6 +28,7 @@ cargo run -p galette-cli -- info --device /dev/sr1
 cargo run --release -p galette-cli -- rip -o ~/Musique             # FLAC + tags + pochette
 cargo run --release -p galette-cli -- rip -o ~/Musique --format wav
 cargo run --release -p galette-cli -- rip -o ~/Musique --mode burst  # une seule lecture
+cargo run --release -p galette-cli -- rip --folder "{albumartist}/{year} - {album}" --name "{track} {title}"
 # Sans lecteur, à partir d'une TOC au format MusicBrainz :
 cargo run -p galette-cli -- info --toc "1 12 242387 150 21636 50551 70783 90795 113395 133171 142126 159578 181123 198419 218045"
 cargo test
@@ -63,10 +64,12 @@ crates/
                        communes à tous les OS
       linux.rs         envoi des commandes via l'ioctl SG_IO
     src/metadata/      métadonnées (MusicBrainz) et pochettes (Cover Art Archive)
+    src/naming.rs      noms des dossiers et fichiers à partir de modèles ({albumartist}, {track}…)
     src/session.rs     déroulé complet d'un rip, partagé par toutes les interfaces
   galette-cli/         interface en ligne de commande
   galette-gui/         application graphique (Tauri)
-    src/main.rs        commandes appelées par la fenêtre, rip en arrière-plan
+    src/main.rs        commandes appelées par la fenêtre, rip en arrière-plan,
+                       surveillance du lecteur, réglages (settings.json)
     ui/                la fenêtre : HTML, CSS et JavaScript, sans framework
 ```
 
@@ -86,6 +89,7 @@ une commande SCSI au lecteur.
 - [x] Encodage FLAC + tags + pochette (Cover Art Archive)
 - [x] Fichier `.cue` (pré-gaps, ISRC, MCN), log de rip
 - [x] Application graphique (Tauri) : édition des métadonnées, choix de l'édition, progression
-- [ ] Détection automatique de l'insertion d'un disque, réglages, paquets d'installation
+- [x] Détection automatique de l'insertion d'un disque, réglages (nommage, décalage, C2, pochette, éjection)
+- [ ] Paquets d'installation
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), macOS (IOKit)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation

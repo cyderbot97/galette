@@ -15,6 +15,7 @@ const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_NONE: libc::c_int = -1;
 const SG_DXFER_FROM_DEV: libc::c_int = -3;
 const SENSE_LEN: usize = 32;
+const DRIVER_SENSE: u16 = 0x08;
 
 /// `struct sg_io_hdr` from `<scsi/sg.h>`.
 #[repr(C)]
@@ -98,8 +99,10 @@ impl Transport for SgTransport {
         }
 
         // Host and driver errors come from the computer side (USB bridge,
-        // timeout): the command did not reach the disc.
-        if hdr.host_status != 0 || hdr.driver_status & 0x0F != 0 {
+        // timeout): the command did not reach the disc. DRIVER_SENSE only
+        // says that the drive answered with sense data, decoded below.
+        let driver = hdr.driver_status & 0x0F;
+        if hdr.host_status != 0 || (driver != 0 && driver != DRIVER_SENSE) {
             return Err(Error::DriveNotResponding(format!(
                 "command 0x{:02X}: host status 0x{:02X}, driver status 0x{:02X}",
                 cdb[0], hdr.host_status, hdr.driver_status

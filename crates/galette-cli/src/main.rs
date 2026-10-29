@@ -9,6 +9,7 @@ use galette_core::drive::{self, Drive};
 use galette_core::ids::{self, AccurateRipId};
 use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::metadata::{Release, musicbrainz};
+use galette_core::naming::Naming;
 use galette_core::session::{self, Disc, Event};
 use galette_core::toc::{self, Toc};
 use galette_core::{log, rip};
@@ -77,6 +78,20 @@ struct RipArgs {
     /// Do not download the cover art.
     #[arg(long)]
     no_cover: bool,
+
+    /// Do not ask the drive for C2 pointers (for drives that report them badly).
+    #[arg(long)]
+    no_c2: bool,
+
+    /// Album folder template; may contain `/` for subfolders.
+    /// Fields: {albumartist} {album} {year} {disc} {disccount}.
+    #[arg(long, default_value_t = Naming::default().folder)]
+    folder: String,
+
+    /// Track file template, without extension.
+    /// Fields: those of --folder, plus {track} {title} {artist}.
+    #[arg(long, default_value_t = Naming::default().file)]
+    name: String,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -174,7 +189,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         Format::Wav => session::Format::Wav,
     };
     println!("Drive    {} {} ({})", disc.drive.vendor, disc.drive.product, disc.drive.revision);
-    println!("Mode     {}", session::read_mode_text(mode, disc.c2()));
+    println!("Mode     {}", session::read_mode_text(mode, !args.no_c2 && disc.c2()));
 
     disc.lookup().context("online lookup failed")?;
     let offset = match (args.offset, disc.offset) {
@@ -202,15 +217,20 @@ fn rip(args: &RipArgs) -> Result<()> {
         (Some(r), session::Format::Flac) if !args.no_cover => fetch_cover(r),
         _ => None,
     };
-    println!("Output   {}", args.output.join(session::album_name(release.as_ref(), &disc.toc)).display());
+    let naming = Naming { folder: args.folder.clone(), file: args.name.clone() };
+    println!("Output   {}", args.output.join(naming.folder(release.as_ref(), &disc.toc)).display());
 
     let settings = session::Settings {
         output: args.output.clone(),
         format,
         mode,
         offset,
+        c2: !args.no_c2,
+        naming,
         release,
         cover,
+        embed_cover: true,
+        save_cover: true,
         tracks: args.tracks.clone(),
         cancel: None,
     };

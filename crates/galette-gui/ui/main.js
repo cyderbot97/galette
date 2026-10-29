@@ -1,5 +1,6 @@
 // Galette's window. Talks to the Rust side (src/main.rs) through Tauri:
-// `invoke` calls a command, `listen` receives the events sent while ripping.
+// `invoke` calls a command, `listen` receives the events sent while ripping
+// (`rip`) and when a disc is inserted or removed (`drive`).
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -8,13 +9,16 @@ const { open: openDialog } = window.__TAURI__.dialog;
 const $ = (id) => document.getElementById(id);
 
 let disc = null; // what the `scan` command returned
-let output = "";
+let prefs = null; // the saved settings, see `Prefs` in src/main.rs
 let ripping = false;
+let scanning = false;
 let lastAlbumDir = null;
 
 // ---------- Disc ----------
 
 async function scan() {
+  if (scanning || ripping) return;
+  scanning = true;
   showEmpty("Lecture du disque…", true);
   disc = null;
   updateRipButton();
@@ -22,9 +26,37 @@ async function scan() {
     disc = await invoke("scan");
     showDisc();
   } catch (error) {
-    showEmpty(String(error).includes("no disc") ? "Aucun disque dans le lecteur." : `Erreur : ${error}`);
+    const text = String(error);
+    if (text.includes("no disc")) showEmpty("Insérez un CD audio.");
+    else if (text.includes("cannot open")) showEmpty("Aucun lecteur détecté. Branchez un lecteur CD.");
+    else showEmpty(`Erreur : ${text}`);
   }
+  scanning = false;
 }
+
+// The Rust side watches the drive and tells when its state changes.
+listen("drive", ({ payload: state }) => {
+  if (ripping) return;
+  switch (state) {
+    case "ready":
+      scan();
+      break;
+    case "loading":
+      disc = null;
+      showEmpty("Chargement du disque…", true);
+      break;
+    case "empty":
+      disc = null;
+      showEmpty("Insérez un CD audio.");
+      break;
+    case "nodrive":
+      disc = null;
+      $("drive").textContent = "";
+      showEmpty("Aucun lecteur détecté. Branchez un lecteur CD.");
+      break;
+  }
+  updateRipButton();
+});
 
 function showEmpty(text, busy = false) {
   $("album").hidden = true;
@@ -38,9 +70,7 @@ function showDisc() {
   $("album").hidden = false;
   setMessage(disc.warning, "info");
 
-  const offset = disc.offset === null ? "décalage inconnu" : `décalage ${signed(disc.offset)}`;
-  $("drive").textContent = `${disc.drive} · ${offset} · C2 ${disc.c2 ? "✓" : "✗"}`;
-  $("offset-field").hidden = disc.offset !== null;
+  showDrive();
 
   const select = $("release");
   select.replaceChildren();
@@ -61,6 +91,14 @@ function showDisc() {
   buildTracks();
   updateRipButton();
   selectRelease();
+}
+
+function showDrive() {
+  if (!disc) return;
+  let offset = disc.offset === null ? "décalage inconnu" : `décalage ${signed(disc.offset)}`;
+  if (prefs.offset !== null) offset = `décalage ${signed(prefs.offset)} (manuel)`;
+  const c2 = disc.c2 && prefs.c2 ? "✓" : "✗";
+  $("drive").textContent = `${disc.drive} · ${offset} · C2 ${c2}`;
 }
 
 function describe(release) {
@@ -213,18 +251,19 @@ function updateRipButton() {
   button.textContent = ripping ? "Arrêter" : "Ripper";
   button.classList.toggle("stop", ripping);
   button.disabled = !ripping && (!disc || checkedTracks().length === 0);
-  for (const id of ["refresh", "eject", "browse", "format", "mode", "release"]) $(id).disabled = ripping;
+  for (const id of ["refresh", "eject", "browse", "format", "mode", "release", "settings"]) $(id).disabled = ripping;
 }
 
 async function startRip() {
+  if (disc.offset === null && prefs.offset === null) {
+    setMessage("Ce lecteur n'est pas dans la base d'AccurateRip : indiquez son décalage de lecture.", "bad");
+    openPrefs();
+    return;
+  }
   const tracks = checkedTracks();
   const request = {
     release: editedRelease(),
     tracks: tracks.length === rows().length ? [] : tracks,
-    output,
-    format: $("format").value,
-    secure: $("mode").value === "secure",
-    offset: disc.offset === null ? Number($("offset").value) : null,
   };
   for (const r of rows()) {
     const waiting = tracks.includes(Number(r.dataset.number));
@@ -335,25 +374,86 @@ $("eject").addEventListener("click", async () => {
   showEmpty("Éjection…", true);
   try {
     await invoke("eject");
-    showEmpty("Insérez un CD audio puis cliquez sur Actualiser.");
+    showEmpty("Insérez un CD audio.");
   } catch (error) {
     showEmpty(`Erreur : ${error}`);
   }
 });
 
 $("browse").addEventListener("click", async () => {
-  const folder = await openDialog({ directory: true, defaultPath: output });
-  if (folder) setOutput(folder);
+  const folder = await openDialog({ directory: true, defaultPath: prefs.output });
+  if (folder) {
+    prefs.output = folder;
+    savePrefs();
+  }
+});
+$("format").addEventListener("change", (e) => {
+  prefs.format = e.target.value;
+  savePrefs();
+});
+$("mode").addEventListener("change", (e) => {
+  prefs.secure = e.target.value === "secure";
+  savePrefs();
 });
 
-function setOutput(path) {
-  output = path;
-  $("output").textContent = path;
-  $("output").title = path;
+// ---------- Settings ----------
+
+async function savePrefs() {
+  showPrefs();
   try {
-    localStorage.setItem("output", path);
-  } catch {}
+    await invoke("save_prefs", { prefs });
+  } catch (error) {
+    setMessage(`Réglages non enregistrés : ${error}`, "bad");
+  }
 }
+
+/// Shows the settings that live in the main window.
+function showPrefs() {
+  $("output").textContent = prefs.output;
+  $("output").title = prefs.output;
+  $("format").value = prefs.format;
+  $("mode").value = prefs.secure ? "secure" : "burst";
+  showDrive();
+}
+
+function openPrefs() {
+  $("pref-folder").value = prefs.naming.folder;
+  $("pref-file").value = prefs.naming.file;
+  $("pref-manual-offset").checked = prefs.offset !== null;
+  $("pref-offset").value = prefs.offset ?? disc?.offset ?? 0;
+  $("pref-offset").disabled = prefs.offset === null;
+  $("pref-offset-auto").textContent =
+    disc?.offset != null ? `(AccurateRip : ${signed(disc.offset)})` : "(lecteur inconnu d'AccurateRip)";
+  $("pref-c2").checked = prefs.c2;
+  $("pref-embed").checked = prefs.embedCover;
+  $("pref-save-cover").checked = prefs.saveCover;
+  $("pref-eject").checked = prefs.ejectAfter;
+  updatePreview();
+  $("prefs").showModal();
+}
+
+async function updatePreview() {
+  const naming = { folder: $("pref-folder").value, file: $("pref-file").value };
+  const release = disc ? editedRelease() : null;
+  const path = await invoke("preview_naming", { naming, release }).catch(() => "");
+  $("pref-preview").textContent = path ? `${prefs.output}/${path}` : "(insérez un disque pour voir un exemple)";
+}
+
+$("settings").addEventListener("click", openPrefs);
+$("pref-folder").addEventListener("input", updatePreview);
+$("pref-file").addEventListener("input", updatePreview);
+$("pref-manual-offset").addEventListener("change", (e) => ($("pref-offset").disabled = !e.target.checked));
+
+$("prefs").addEventListener("close", () => {
+  if ($("prefs").returnValue !== "save") return;
+  prefs.naming = { folder: $("pref-folder").value.trim(), file: $("pref-file").value.trim() };
+  prefs.offset = $("pref-manual-offset").checked ? Number($("pref-offset").value) || 0 : null;
+  prefs.c2 = $("pref-c2").checked;
+  prefs.embedCover = $("pref-embed").checked;
+  prefs.saveCover = $("pref-save-cover").checked;
+  prefs.ejectAfter = $("pref-eject").checked;
+  savePrefs();
+});
 
 function signed(n) {
   return n > 0 ? `+${n}` : String(n);
@@ -362,10 +462,7 @@ function signed(n) {
 // ---------- Start ----------
 
 (async () => {
-  let saved = null;
-  try {
-    saved = localStorage.getItem("output");
-  } catch {}
-  setOutput(saved || (await invoke("default_output")));
+  prefs = await invoke("get_prefs");
+  showPrefs();
   scan();
 })();

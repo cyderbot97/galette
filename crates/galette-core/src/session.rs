@@ -16,6 +16,7 @@ use crate::drive::{Drive, DriveInfo};
 use crate::ids::{self, AccurateRipId};
 use crate::metadata::coverart::CoverArt;
 use crate::metadata::{Release, musicbrainz};
+use crate::naming::Naming;
 use crate::rip::{self, Mode, Progress};
 use crate::toc::Toc;
 use crate::{Error, Result, cue, flac, gaps, log, tags, wav};
@@ -87,9 +88,16 @@ pub struct Settings {
     pub format: Format,
     pub mode: Mode,
     pub offset: i32,
+    /// Use C2 pointers if the drive has them.
+    pub c2: bool,
+    pub naming: Naming,
     /// Metadata to use, possibly edited by the user.
     pub release: Option<Release>,
     pub cover: Option<CoverArt>,
+    /// Put the cover in the FLAC files.
+    pub embed_cover: bool,
+    /// Save the cover next to the files, as `cover.jpg`.
+    pub save_cover: bool,
     /// Track numbers to rip, all of them if empty.
     pub tracks: Vec<u8>,
     /// Set from another thread to stop the rip.
@@ -132,21 +140,14 @@ pub fn read_mode_text(mode: Mode, c2: bool) -> String {
     }
 }
 
-/// Folder name of an album, also used for its log and cue sheet.
-pub fn album_name(release: Option<&Release>, toc: &Toc) -> String {
-    match release {
-        Some(r) => sanitize(&format!("{} - {}", r.artist, r.title)),
-        None => format!("Disc {}", ids::musicbrainz(toc)),
-    }
-}
-
 pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut dyn FnMut(Event)) -> Result<Outcome> {
     let toc = &disc.toc;
     let release = settings.release.as_ref();
-    let base_name = album_name(release, toc);
-    let album_dir = settings.output.join(&base_name);
+    let album_dir = settings.output.join(settings.naming.folder(release, toc));
+    // The log and cue sheet are named after the album folder.
+    let base_name = album_dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
     fs::create_dir_all(&album_dir).map_err(|e| with_path(e, "cannot create", &album_dir))?;
-    if let Some(cover) = &settings.cover {
+    if let Some(cover) = settings.cover.as_ref().filter(|_| settings.save_cover) {
         let path = album_dir.join(format!("cover.{}", cover.extension()));
         if let Err(e) = fs::write(&path, &cover.data) {
             on_event(Event::Warning(format!("cannot save {}: {e}", path.display())));
@@ -171,7 +172,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     let options = rip::Options {
         mode: settings.mode,
         offset: settings.offset,
-        c2: disc.c2(),
+        c2: settings.c2 && disc.c2(),
         cache_kib: disc.capabilities.map_or(0, |c| c.buffer_kib as u32),
         cancel: settings.cancel.as_deref(),
     };
@@ -198,7 +199,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         })?;
         let audio = read.audio;
 
-        let file_name = format!("{number:02} - {}.{}", sanitize(&title), settings.format.extension());
+        let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
         let path = album_dir.join(&file_name);
         let file = match settings.format {
             Format::Flac => {
@@ -207,7 +208,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
                 if let Some(isrc) = &isrc {
                     tags.push(("ISRC", isrc.clone()));
                 }
-                flac::encode(&audio, &tags, settings.cover.as_ref())?
+                flac::encode(&audio, &tags, settings.cover.as_ref().filter(|_| settings.embed_cover))?
             }
             Format::Wav => {
                 let mut file = Vec::with_capacity(audio.len() + 44);
@@ -235,7 +236,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         cue_tracks.push(cue::TrackFile { index, file_name, pregap: subcode.pregaps[index], isrc });
     }
 
-    let read_mode = read_mode_text(settings.mode, disc.c2());
+    let read_mode = read_mode_text(settings.mode, settings.c2 && disc.c2());
     let rip_log = log::RipLog {
         date: SystemTime::now(),
         drive: &disc.drive,

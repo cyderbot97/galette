@@ -12,13 +12,14 @@
     <div class="actions">
       <button id="refresh" title="Relire le disque">↻ Actualiser</button>
       <button id="eject" title="Ouvrir le tiroir">⏏ Éjecter</button>
+      <button id="settings" title="Réglages">⚙ Réglages</button>
     </div>
   </header>
 
   <main>
     <section id="empty" class="empty">
       <div class="disc-icon"></div>
-      <p id="empty-text">Insérez un CD audio puis cliquez sur Actualiser.</p>
+      <p id="empty-text">Insérez un CD audio.</p>
     </section>
 
     <section id="album" hidden>
@@ -74,11 +75,55 @@
         <option value="burst">Rapide</option>
       </select>
     </label>
-    <label id="offset-field" hidden>Décalage
-      <input id="offset" type="number" step="1" value="0">
-    </label>
     <button id="rip" class="primary" disabled>Ripper</button>
   </footer>
+
+  <dialog id="prefs">
+    <form method="dialog">
+      <h2>Réglages</h2>
+
+      <fieldset>
+        <legend>Nommage</legend>
+        <label>Dossier de l'album
+          <input id="pref-folder" spellcheck="false">
+        </label>
+        <label>Fichier de chaque piste
+          <input id="pref-file" spellcheck="false">
+        </label>
+        <p class="hint">
+          Champs : <code>{albumartist}</code> <code>{album}</code> <code>{year}</code> <code>{disc}</code>
+          <code>{disccount}</code>, et pour les fichiers <code>{track}</code> <code>{title}</code> <code>{artist}</code>.
+          Un <code>/</code> dans le dossier crée des sous-dossiers.
+        </p>
+        <p class="preview">Exemple : <span id="pref-preview"></span></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Lecture</legend>
+        <label class="inline">
+          <input type="checkbox" id="pref-manual-offset"> Décalage de lecture manuel
+          <input id="pref-offset" type="number" step="1" value="0">
+          <span class="hint" id="pref-offset-auto"></span>
+        </label>
+        <label class="inline">
+          <input type="checkbox" id="pref-c2"> Utiliser les pointeurs C2
+          <span class="hint">(à décocher si le lecteur les gère mal)</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Pochette et disque</legend>
+        <label class="inline"><input type="checkbox" id="pref-embed"> Intégrer la pochette dans les fichiers FLAC</label>
+        <label class="inline"><input type="checkbox" id="pref-save-cover"> Enregistrer la pochette (cover.jpg)</label>
+        <label class="inline"><input type="checkbox" id="pref-eject"> Éjecter le disque à la fin du rip</label>
+      </fieldset>
+
+      <div class="dialog-buttons">
+        <button value="cancel" formnovalidate>Annuler</button>
+        <button value="save" class="primary" id="pref-save">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="main.js"></script>
 </body>
