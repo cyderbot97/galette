@@ -50,10 +50,13 @@ pub struct SgTransport {
 impl SgTransport {
     pub fn open(path: &str) -> Result<Self> {
         // O_NONBLOCK lets us open the device even when the tray is empty or open.
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(path)
+        // The kernel only lets read-only descriptors send commands that read;
+        // ejecting needs write access, so ask for it when we have it.
+        let open = |write: bool| {
+            OpenOptions::new().read(true).write(write).custom_flags(libc::O_NONBLOCK).open(path)
+        };
+        let file = open(true)
+            .or_else(|_| open(false))
             .map_err(|e| io::Error::new(e.kind(), format!("cannot open {path}: {e}")))?;
         Ok(Self { file })
     }
