@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/galette-core", "crates/galette-cli", "crates/galette-gui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/cyderbot97/galette"

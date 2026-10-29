@@ -9,7 +9,7 @@ Secure audio CD ripper, free software (GPL-3.0-or-later): EAC-quality ripping wi
 - **Always ask before pushing, tagging or publishing anything** (git push, GitHub releases, issues).
 - Git identity is anonymous: `cyderbot97 <49147296+cyderbot97@users.noreply.github.com>`. Never send the user's personal email to any service (User-Agent, headers, etc.).
 - Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Versioning: SemVer. 0.1.0 is published (Linux, pre-release). Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
+- Versioning: SemVer. 0.1.0 is published (Linux, pre-release); 0.2.0 adds macOS. Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
 
 ## Layout
 
@@ -34,7 +34,7 @@ cargo test
 cargo clippy --all-targets
 cargo run --release -p galette-gui
 cargo run --release -p galette-cli -- info
-cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux
+cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux, .app + .dmg on macOS
 ```
 
 On macOS, build outside `~/Documents` (see below): `export CARGO_TARGET_DIR=~/.cache/galette-target`.
@@ -52,6 +52,7 @@ On macOS, build outside `~/Documents` (see below): `export CARGO_TARGET_DIR=~/.c
 - **macOS: a binary under `~/Documents` cannot open the drive** (`IOCreatePlugInInterfaceForService` → 0xE00002BE kIOReturnNoResources): opening the MMC user client makes `authd` check the binary, and TCC forbids authd from reading `~/Documents`. Hence `CARGO_TARGET_DIR` elsewhere. An app in /Applications is not affected.
 - **macOS: IOKit vtables must match `SCSITaskLib.h` slot by slot.** A first version missed `GetCommandDescriptorBlockSize` and `GetTimeoutDuration` (not returning IOReturn, so a grep skipped them): every call landed on the wrong function, silently. Check offsets with a C `offsetof` program when touching them.
 - **macOS: `GetSCSIServiceResponse` must be checked** after `ExecuteTaskSync`: not TASK_COMPLETE → `DriveNotResponding`; a rejected command completes with CHECK CONDITION status and sense data.
+- macOS bundle settings live in `tauri.macos.conf.json` (merged over `tauri.conf.json`): targets app + dmg, `icon.icns`, and `signingIdentity: "-"` so the whole bundle is ad-hoc signed (otherwise only the binary is, and a downloaded app is reported as damaged).
 - Tauri bundle category must be a valid Tauri value (`Music`); icon file names must be plain sizes (`256x256.png`, not `@2x`).
 
 ## Tested hardware
@@ -60,6 +61,6 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 ## Roadmap
 
-- macOS: test the GUI and full-disc rips, then package a .app/.dmg (`cargo tauri build`).
+- macOS: Intel / universal build (`--target universal-apple-darwin`), Developer ID signing and notarization.
 - Windows transport.
 - CTDB verification and repair, HTOA, CD-Text, pre-emphasis.

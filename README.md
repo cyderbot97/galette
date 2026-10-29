@@ -6,7 +6,7 @@ L'objectif : la fiabilité d'EAC et la simplicité de dBpoweramp CD Ripper.
 On insère un CD, Galette le reconnaît sur MusicBrainz, extrait l'audio sans erreur,
 vérifie le résultat avec AccurateRip et produit des fichiers FLAC correctement tagués.
 
-> État : début de développement. Sous Linux, Galette reconnaît le CD sur MusicBrainz,
+> État : début de développement. Sous Linux et macOS, Galette reconnaît le CD sur MusicBrainz,
 > l'extrait avec correction du décalage du lecteur, vérifie chaque piste avec
 > AccurateRip et produit des FLAC tagués avec leur pochette, un fichier `.cue`
 > (pré-gaps, ISRC, MCN) et un log. Mode sécurisé avec relectures et pointeurs C2.
@@ -25,6 +25,28 @@ cd crates/galette-gui && cargo tauri build
 Galette apparaît alors dans le menu Multimédia. Pour accéder au lecteur, l'utilisateur doit
 faire partie du groupe `cdrom` (c'est le cas par défaut sous Debian et Ubuntu).
 
+## Installer (macOS)
+
+Ouvrir `Galette_0.2.0_aarch64.dmg` et glisser Galette dans Applications.
+L'application n'est pas signée par un certificat Apple : au premier lancement,
+macOS refuse de l'ouvrir. Aller alors dans Réglages Système → Confidentialité et
+sécurité, puis « Ouvrir quand même ».
+
+Pour la construire (il faut Rust, les outils en ligne de commande de Xcode et `cargo install tauri-cli`) :
+
+```sh
+export CARGO_TARGET_DIR=~/.cache/galette-target   # hors de ~/Documents, voir ci-dessous
+cd crates/galette-gui && cargo tauri build
+```
+
+Le `.app` et le `.dmg` sont dans `$CARGO_TARGET_DIR/release/bundle/`.
+
+Galette démonte le CD pendant qu'il le lit (macOS l'exige pour accéder directement
+au lecteur), puis le rend au système. Si l'app Musique s'ouvre à l'insertion d'un CD,
+fermez-la : elle empêche Galette d'accéder au disque. Un programme lancé depuis
+le dossier Documents ne peut pas ouvrir le lecteur (protection de la vie privée
+de macOS) : d'où le dossier de compilation ailleurs.
+
 ## Essayer
 
 Il faut [Rust](https://rustup.rs). Pour l'application graphique sous Linux (Debian/Ubuntu) :
@@ -37,8 +59,8 @@ cargo run --release -p galette-gui
 En ligne de commande :
 
 ```sh
-cargo run -p galette-cli -- info                    # CD dans /dev/sr0
-cargo run -p galette-cli -- info --device /dev/sr1
+cargo run -p galette-cli -- info                    # CD dans /dev/sr0 (Linux), premier lecteur (macOS)
+cargo run -p galette-cli -- info --device /dev/sr1  # macOS : --device disk4
 cargo run --release -p galette-cli -- rip -o ~/Musique             # FLAC + tags + pochette
 cargo run --release -p galette-cli -- rip -o ~/Musique --format wav
 cargo run --release -p galette-cli -- rip -o ~/Musique --mode burst  # une seule lecture
