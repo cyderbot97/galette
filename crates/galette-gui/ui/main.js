@@ -11,6 +11,8 @@ const $ = (id) => document.getElementById(id);
 let disc = null; // what the `scan` command returned
 let prefs = null; // the saved settings, see `Prefs` in src/main.rs
 let ripping = false;
+/// The user asked to stop; the rip ends at its next check.
+let stopping = false;
 let scanning = false;
 let lastAlbumDir = null;
 
@@ -247,10 +249,11 @@ function checkedTracks() {
 }
 
 function updateRipButton() {
+  if (!ripping) stopping = false;
   const button = $("rip");
-  button.textContent = ripping ? "Arrêter" : "Ripper";
+  button.textContent = stopping ? "Arrêt…" : ripping ? "Arrêter" : "Ripper";
   button.classList.toggle("stop", ripping);
-  button.disabled = !ripping && (!disc || checkedTracks().length === 0);
+  button.disabled = stopping || (!ripping && (!disc || checkedTracks().length === 0));
   for (const id of ["refresh", "eject", "browse", "format", "mode", "release", "settings"]) $(id).disabled = ripping;
 }
 
@@ -364,7 +367,13 @@ function setMessage(text, kind = "info", withFolder = false) {
 
 // ---------- Controls ----------
 
-$("rip").addEventListener("click", () => (ripping ? invoke("cancel_rip") : startRip()));
+$("rip").addEventListener("click", () => (ripping ? stopRip() : startRip()));
+
+function stopRip() {
+  stopping = true;
+  updateRipButton();
+  invoke("cancel_rip");
+}
 $("refresh").addEventListener("click", scan);
 $("release").addEventListener("change", selectRelease);
 $("check-all").addEventListener("change", (e) => {

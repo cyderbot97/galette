@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,13 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     }
 
     on_event(Event::ReadingSubcode);
-    let subcode = read_subcode(drive, toc, on_event)?;
+    let cancelled = || -> Result<()> {
+        match &settings.cancel {
+            Some(c) if c.load(Ordering::Relaxed) => Err(Error::Cancelled),
+            _ => Ok(()),
+        }
+    };
+    let subcode = read_subcode(drive, toc, &cancelled, on_event)?;
     on_event(Event::Subcode {
         pregaps: subcode.pregaps.iter().filter(|&&g| g > 0).count(),
         isrcs: subcode.isrcs.iter().flatten().count(),
@@ -206,6 +212,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         if !settings.tracks.is_empty() && !settings.tracks.contains(&track.number) {
             continue;
         }
+        cancelled()?;
         let number = track.number;
         let title = release
             .and_then(|r| r.tracks.iter().find(|t| t.number == number as u32))
@@ -225,6 +232,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
 
         let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
         let path = album_dir.join(&file_name);
+        cancelled()?;
         if settings.format != Format::Wav {
             on_event(Event::Encoding { number });
         }
@@ -328,7 +336,12 @@ struct Subcode {
 
 /// Some drives do not support these commands: the rip goes on without them,
 /// unless the drive stopped responding altogether.
-fn read_subcode(drive: &mut Drive, toc: &Toc, on_event: &mut dyn FnMut(Event)) -> Result<Subcode> {
+fn read_subcode(
+    drive: &mut Drive,
+    toc: &Toc,
+    cancelled: &dyn Fn() -> Result<()>,
+    on_event: &mut dyn FnMut(Event),
+) -> Result<Subcode> {
     let mut optional = |result: Result<Option<String>>, what: &str| match result {
         Ok(value) => Ok(value),
         Err(e) if e.is_drive_failure() => Err(e),
@@ -340,6 +353,7 @@ fn read_subcode(drive: &mut Drive, toc: &Toc, on_event: &mut dyn FnMut(Event)) -
     let mcn = optional(drive.read_mcn(), "the MCN")?;
     let mut isrcs = Vec::new();
     for track in &toc.tracks {
+        cancelled()?;
         isrcs.push(match track.is_audio {
             true => match drive.read_isrc(track.number) {
                 Err(e) if e.is_drive_failure() => return Err(e),
@@ -348,9 +362,9 @@ fn read_subcode(drive: &mut Drive, toc: &Toc, on_event: &mut dyn FnMut(Event)) -
             false => None,
         });
     }
-    let pregaps = match gaps::detect_pregaps(toc, &mut |lba| drive.read_q(lba)) {
+    let pregaps = match gaps::detect_pregaps(toc, &mut |lba| cancelled().and_then(|()| drive.read_q(lba))) {
         Ok(pregaps) => pregaps,
-        Err(e) if e.is_drive_failure() => return Err(e),
+        Err(e) if e.is_drive_failure() || matches!(e, Error::Cancelled) => return Err(e),
         Err(e) => {
             on_event(Event::Warning(format!("cannot read pregaps: {e}")));
             vec![0; toc.tracks.len()]

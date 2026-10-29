@@ -127,7 +127,7 @@ pub fn read_track(
 
     let disc_end = toc.audio_lead_out();
     let cache_sectors = options.cache_kib.max(MIN_CACHE_KIB) * 1024 / SECTOR_BYTES as u32;
-    reader.flush_cache(span.sectors.start, disc_end, cache_sectors);
+    reader.flush_cache(span.sectors.start, disc_end, cache_sectors)?;
     let second = reader.read(span.sectors.clone(), &mut |f| progress(Progress::Verifying(f)))?;
 
     let mut report = ReadReport { passes: 2, ..Default::default() };
@@ -151,7 +151,7 @@ pub fn read_track(
             break;
         }
         progress(Progress::Rereading { attempt, sectors: pending.len() });
-        reader.flush_cache(span.sectors.start, disc_end, cache_sectors);
+        reader.flush_cache(span.sectors.start, disc_end, cache_sectors)?;
         for run in runs(&pending) {
             let start = span.sectors.start + run.start as u32;
             let pass = reader.read(start..start + run.len() as u32, &mut |_| {})?;
@@ -262,9 +262,7 @@ impl Reader<'_> {
         let mut pass = Pass { data: vec![0; count * SECTOR_BYTES], flags: vec![Flag::Good; count], first_lba: sectors.start };
         let mut lba = sectors.start;
         while lba < sectors.end {
-            if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-                return Err(Error::Cancelled);
-            }
+            self.check_cancel()?;
             let n = SECTORS_PER_READ.min(sectors.end - lba);
             let i = (lba - sectors.start) as usize;
             match self.read_chunk(lba, n, &mut pass, i) {
@@ -288,6 +286,8 @@ impl Reader<'_> {
     /// Tries a few times to read one sector; `false` if the disc refuses.
     fn read_sector(&mut self, lba: u32, pass: &mut Pass, i: usize) -> Result<bool> {
         for _ in 0..ATTEMPTS {
+            // A damaged sector can take many seconds per attempt.
+            self.check_cancel()?;
             match self.read_chunk(lba, 1, pass, i) {
                 Ok(()) => return Ok(true),
                 Err(e) if e.is_drive_failure() => return Err(e),
@@ -316,15 +316,21 @@ impl Reader<'_> {
 
     /// Fills the drive's cache with another part of the disc, so that the
     /// next read of `near` really reads the disc again.
-    fn flush_cache(&mut self, near: u32, disc_end: u32, cache_sectors: u32) {
+    fn check_cancel(&self) -> Result<()> {
+        if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { Err(Error::Cancelled) } else { Ok(()) }
+    }
+
+    fn flush_cache(&mut self, near: u32, disc_end: u32, cache_sectors: u32) -> Result<()> {
         let len = (cache_sectors + SECTORS_PER_READ).min(disc_end / 4);
         let start = if near < disc_end / 2 { disc_end - len } else { 0 };
         let mut buf = vec![0u8; SECTORS_PER_READ as usize * SECTOR_BYTES];
         for lba in (start..start + len).step_by(SECTORS_PER_READ as usize) {
             let n = SECTORS_PER_READ.min(start + len - lba);
+            self.check_cancel()?;
             // A failure here only means this part of the disc is damaged too.
             let _ = self.drive.read_audio(lba, n, &mut buf[..n as usize * SECTOR_BYTES]);
         }
+        Ok(())
     }
 }
 
