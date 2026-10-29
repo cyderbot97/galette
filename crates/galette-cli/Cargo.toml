@@ -1,0 +1,16 @@
+[package]
+name = "galette-cli"
+description = "Command-line interface for Galette"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "galette"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+galette-core = { path = "../galette-core" }
