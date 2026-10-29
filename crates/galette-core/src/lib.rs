@@ -16,6 +16,7 @@ pub mod ids;
 pub mod log;
 pub mod metadata;
 pub mod rip;
+pub mod session;
 pub mod tags;
 pub mod toc;
 pub mod wav;
