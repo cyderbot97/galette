@@ -18,7 +18,7 @@ use crate::toc::{SECTOR_BYTES, Toc};
 pub const SAMPLES_PER_SECTOR: i64 = 588;
 const BYTES_PER_SAMPLE: i64 = 4;
 
-/// Sectors per READ CD command: 24 × (2352 + 294) bytes stays under the
+/// Sectors per READ CD command: 24 × (2352 + 296) bytes stays under the
 /// 64 KiB that every USB bridge accepts, even with C2 pointers.
 const SECTORS_PER_READ: u32 = 24;
 /// Attempts at reading a sector the drive rejects, in a single pass.

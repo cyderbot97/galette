@@ -61,13 +61,18 @@ pub fn read_cd_cdb(lba: u32, count: u32) -> [u8; 12] {
     read_cd(lba, count, 0)
 }
 
-/// Bytes of C2 error pointers per sector: one bit per byte of audio.
-pub const C2_LEN: usize = 294;
+/// Bytes of C2 error information per sector: one bit per byte of audio
+/// (294 bytes), the OR of them all and a pad byte.
+///
+/// The format without the last two bytes makes sectors of 2646 bytes, which
+/// some USB bridges (Initio) cannot transfer several at a time: they stop
+/// mid-transfer and stop responding. 2648 bytes is a multiple of 8.
+pub const C2_LEN: usize = 296;
 
-/// READ CD of `count` CD-DA sectors, each followed by its C2 error pointers.
+/// READ CD of `count` CD-DA sectors, each followed by its C2 error information.
 pub fn read_cd_c2_cdb(lba: u32, count: u32) -> [u8; 12] {
     let mut cdb = read_cd(lba, count, 0);
-    cdb[9] |= 0b01 << 1; // C2 error bits
+    cdb[9] |= 0b10 << 1; // C2 and block error bits
     cdb
 }
 
@@ -290,6 +295,6 @@ mod tests {
     fn read_cd_encodes_address() {
         let cdb = read_cd_cdb(0x0001_0203, 27);
         assert_eq!(&cdb[2..9], &[0, 1, 2, 3, 0, 0, 27]);
-        assert_eq!(read_cd_c2_cdb(0, 1)[9], 0x12);
+        assert_eq!(read_cd_c2_cdb(0, 1)[9], 0x14);
     }
 }
