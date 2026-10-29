@@ -17,8 +17,9 @@ pub struct TrackFile {
     pub isrc: Option<String>,
 }
 
-/// `tracks` lists every audio track of the disc, in order.
-pub fn cue_sheet(toc: &Toc, release: Option<&Release>, mcn: Option<&str>, tracks: &[TrackFile]) -> String {
+/// `tracks` lists every audio track of the disc, in order; `file_type` is
+/// the cue sheet name of their format (WAVE, AIFF, MP3).
+pub fn cue_sheet(toc: &Toc, release: Option<&Release>, mcn: Option<&str>, file_type: &str, tracks: &[TrackFile]) -> String {
     let mut cue = String::new();
     let mut line = |text: String| {
         cue.push_str(&text);
@@ -42,7 +43,7 @@ pub fn cue_sheet(toc: &Toc, release: Option<&Release>, mcn: Option<&str>, tracks
         let track = &toc.tracks[file.index];
         let info = release.and_then(|r| r.tracks.iter().find(|t| t.number == track.number as u32));
         if position == 0 {
-            line(format!("FILE {} WAVE", quote(&file.file_name)));
+            line(format!("FILE {} {file_type}", quote(&file.file_name)));
         }
         line(format!("  TRACK {:02} AUDIO", track.number));
         if let Some(info) = info {
@@ -64,7 +65,7 @@ pub fn cue_sheet(toc: &Toc, release: Option<&Release>, mcn: Option<&str>, tracks
                 let length = toc.track_sectors(previous.index);
                 line(format!("    INDEX 00 {}", msf(length - file.pregap)));
             }
-            line(format!("FILE {} WAVE", quote(&file.file_name)));
+            line(format!("FILE {} {file_type}", quote(&file.file_name)));
         }
         line("    INDEX 01 00:00:00".to_string());
     }
@@ -93,7 +94,7 @@ mod tests {
             TrackFile { index: 0, file_name: "01.flac".into(), pregap: 0, isrc: Some("USWB11302490".into()) },
             TrackFile { index: 1, file_name: "02 \"x\".flac".into(), pregap: 150, isrc: None },
         ];
-        let cue = cue_sheet(&toc, None, Some("0093624943099"), &tracks);
+        let cue = cue_sheet(&toc, None, Some("0093624943099"), "WAVE", &tracks);
         let expected = [
             "REM DISCID 0B019002",
             "CATALOG 0093624943099",

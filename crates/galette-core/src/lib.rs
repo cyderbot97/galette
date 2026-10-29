@@ -6,6 +6,7 @@
 //! The CLI and the future desktop GUI are thin layers on top of it.
 
 pub mod accuraterip;
+pub mod aiff;
 pub mod cue;
 pub mod drive;
 pub mod error;
@@ -15,6 +16,7 @@ mod http;
 pub mod ids;
 pub mod log;
 pub mod metadata;
+pub mod mp3;
 pub mod naming;
 pub mod rip;
 pub mod session;

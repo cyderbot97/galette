@@ -4,7 +4,8 @@ Ripper de CD audio **sécurisé**, **libre** (GPL-3.0) et **multiplateforme** (L
 
 L'objectif : la fiabilité d'EAC et la simplicité de dBpoweramp CD Ripper.
 On insère un CD, Galette le reconnaît sur MusicBrainz, extrait l'audio sans erreur,
-vérifie le résultat avec AccurateRip et produit des fichiers FLAC correctement tagués.
+vérifie le résultat avec AccurateRip et produit des fichiers correctement tagués
+(FLAC, MP3, AIFF ou WAV).
 
 > État : début de développement. Sous Linux et macOS, Galette reconnaît le CD sur MusicBrainz,
 > l'extrait avec correction du décalage du lecteur, vérifie chaque piste avec
@@ -63,6 +64,8 @@ cargo run -p galette-cli -- info                    # CD dans /dev/sr0 (Linux), 
 cargo run -p galette-cli -- info --device /dev/sr1  # macOS : --device disk4
 cargo run --release -p galette-cli -- rip -o ~/Musique             # FLAC + tags + pochette
 cargo run --release -p galette-cli -- rip -o ~/Musique --format wav
+cargo run --release -p galette-cli -- rip -o ~/Musique --format mp3 --mp3-quality v0   # ou v2, 320
+cargo run --release -p galette-cli -- rip -o ~/Musique --format aiff
 cargo run --release -p galette-cli -- rip -o ~/Musique --mode burst  # une seule lecture
 cargo run --release -p galette-cli -- rip --folder "{albumartist}/{year} - {album}" --name "{track} {title}"
 # Sans lecteur, à partir d'une TOC au format MusicBrainz :
@@ -90,7 +93,9 @@ crates/
     src/rip.rs         extraction d'une piste : décalage, mode sécurisé, C2, relectures
     src/accuraterip.rs sommes de contrôle v1/v2, base de décalages des lecteurs
     src/flac.rs        encodage FLAC (vérifié par décodage), tags et pochette intégrés
-    src/tags.rs        tags au format de MusicBrainz Picard
+    src/mp3.rs         encodage MP3 avec LAME (VBR V0/V2 ou CBR 320, lecture sans blanc)
+    src/aiff.rs        écriture des fichiers AIFF
+    src/tags.rs        tags au format de MusicBrainz Picard (Vorbis et ID3v2.4)
     src/gaps.rs        détection des pré-gaps par le sous-canal Q
     src/cue.rs         fichier .cue (un fichier par piste, pré-gaps en fin de piste précédente)
     src/log.rs         log de rip
@@ -99,6 +104,7 @@ crates/
       mmc.rs           commandes MMC (INQUIRY, MODE SENSE, READ TOC, READ CD, READ SUB-CHANNEL),
                        communes à tous les OS
       linux.rs         envoi des commandes via l'ioctl SG_IO
+      macos.rs         envoi des commandes via IOKit (SCSITask), démontage du disque
     src/metadata/      métadonnées (MusicBrainz) et pochettes (Cover Art Archive)
     src/naming.rs      noms des dossiers et fichiers à partir de modèles ({albumartist}, {track}…)
     src/session.rs     déroulé complet d'un rip, partagé par toutes les interfaces
@@ -127,5 +133,8 @@ une commande SCSI au lecteur.
 - [x] Application graphique (Tauri) : édition des métadonnées, choix de l'édition, progression
 - [x] Détection automatique de l'insertion d'un disque, réglages (nommage, décalage, C2, pochette, éjection)
 - [x] Paquets d'installation Linux (.deb, AppImage)
-- [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), macOS (IOKit)
+- [x] macOS (IOKit), application .app / .dmg
+- [x] MP3 (LAME) et AIFF, tags ID3
+- [ ] Opus, ALAC, WavPack, AAC (macOS uniquement)
+- [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation

@@ -1,8 +1,39 @@
 //! Tags of a ripped track, named as MusicBrainz Picard writes them in Vorbis
 //! comments (<https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html>),
-//! so that players and library managers recognize them.
+//! so that players and library managers recognize them. MP3 and AIFF files
+//! get the same tags as ID3v2.4 frames, again as Picard names them.
+
+use id3::frame::{Content, ExtendedText, Picture, PictureType, UniqueFileIdentifier};
+use id3::{Frame, TagLike};
 
 use crate::metadata::Release;
+use crate::metadata::coverart::CoverArt;
+
+/// ID3 text frames holding a Vorbis comment as is.
+const ID3_TEXT: [(&str, &str); 9] = [
+    ("TITLE", "TIT2"),
+    ("ARTIST", "TPE1"),
+    ("ALBUM", "TALB"),
+    ("ALBUMARTIST", "TPE2"),
+    ("DATE", "TDRC"),
+    ("ORIGINALDATE", "TDOR"),
+    ("LABEL", "TPUB"),
+    ("MEDIA", "TMED"),
+    ("ISRC", "TSRC"),
+];
+
+/// Vorbis comments that go in user-defined (TXXX) ID3 frames, with their description.
+const ID3_USER: [(&str, &str); 9] = [
+    ("CATALOGNUMBER", "CATALOGNUMBER"),
+    ("BARCODE", "BARCODE"),
+    ("RELEASECOUNTRY", "MusicBrainz Album Release Country"),
+    ("MUSICBRAINZ_ALBUMID", "MusicBrainz Album Id"),
+    ("MUSICBRAINZ_RELEASEGROUPID", "MusicBrainz Release Group Id"),
+    ("MUSICBRAINZ_RELEASETRACKID", "MusicBrainz Release Track Id"),
+    ("MUSICBRAINZ_ARTISTID", "MusicBrainz Artist Id"),
+    ("MUSICBRAINZ_ALBUMARTISTID", "MusicBrainz Album Artist Id"),
+    ("MUSICBRAINZ_DISCID", "MusicBrainz Disc Id"),
+];
 
 /// Tags for track `number` of a disc with `track_count` audio tracks.
 /// Without a release, only the numbering and the Disc ID are known.
@@ -56,6 +87,46 @@ pub fn vorbis_comments(
     tags
 }
 
+/// The Vorbis comments `tags` as an ID3v2.4 tag, with the cover if given.
+pub fn id3(tags: &[(&str, String)], cover: Option<&CoverArt>) -> id3::Tag {
+    // ID3v2.4 separates the values of a frame with a null character.
+    let joined = |key: &str| {
+        let values: Vec<&str> = tags.iter().filter(|(k, _)| *k == key).map(|(_, v)| v.as_str()).collect();
+        (!values.is_empty()).then(|| values.join("\0"))
+    };
+    let mut tag = id3::Tag::with_version(id3::Version::Id3v24);
+    for (key, frame) in ID3_TEXT {
+        if let Some(value) = joined(key) {
+            tag.add_frame(Frame::text(frame, value));
+        }
+    }
+    // "3/12": number and total in one frame.
+    for (number, total, frame) in [("TRACKNUMBER", "TRACKTOTAL", "TRCK"), ("DISCNUMBER", "DISCTOTAL", "TPOS")] {
+        if let Some(number) = joined(number) {
+            let value = joined(total).map_or(number.clone(), |total| format!("{number}/{total}"));
+            tag.add_frame(Frame::text(frame, value));
+        }
+    }
+    for (key, description) in ID3_USER {
+        if let Some(value) = joined(key) {
+            tag.add_frame(ExtendedText { description: description.into(), value });
+        }
+    }
+    if let Some(recording) = joined("MUSICBRAINZ_TRACKID") {
+        let id = UniqueFileIdentifier { owner_identifier: "http://musicbrainz.org".into(), identifier: recording.into_bytes() };
+        tag.add_frame(Frame::with_content("UFID", Content::UniqueFileIdentifier(id)));
+    }
+    if let Some(cover) = cover {
+        tag.add_frame(Picture {
+            mime_type: cover.mime_type.into(),
+            picture_type: PictureType::CoverFront,
+            description: String::new(),
+            data: cover.data.clone(),
+        });
+    }
+    tag
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +171,23 @@ mod tests {
         }
         assert_eq!(tags.iter().filter(|(k, _)| *k == "MUSICBRAINZ_ALBUMARTISTID").count(), 2);
         assert!(!tags.iter().any(|(k, _)| *k == "LABEL"));
+    }
+
+    #[test]
+    fn id3_frames() {
+        let tags = vec![
+            ("TITLE", "Song".to_string()),
+            ("TRACKNUMBER", "3".into()),
+            ("TRACKTOTAL", "12".into()),
+            ("MUSICBRAINZ_ARTISTID", "a".into()),
+            ("MUSICBRAINZ_ARTISTID", "b".into()),
+            ("MUSICBRAINZ_TRACKID", "rec".into()),
+        ];
+        let tag = id3(&tags, None);
+        assert_eq!(tag.title(), Some("Song"));
+        assert_eq!((tag.track(), tag.total_tracks()), (Some(3), Some(12)));
+        let artist_ids = tag.extended_texts().find(|t| t.description == "MusicBrainz Artist Id").unwrap();
+        assert_eq!(artist_ids.value, "a\0b");
+        assert!(tag.unique_file_identifiers().any(|u| u.identifier == b"rec"));
     }
 }

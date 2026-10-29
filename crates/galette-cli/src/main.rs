@@ -12,7 +12,7 @@ use galette_core::metadata::{Release, musicbrainz};
 use galette_core::naming::Naming;
 use galette_core::session::{self, Disc, Event};
 use galette_core::toc::{self, Toc};
-use galette_core::{log, rip};
+use galette_core::{log, mp3, rip};
 
 #[derive(Parser)]
 #[command(name = "galette", version, about = "Secure audio CD ripper")]
@@ -57,6 +57,10 @@ struct RipArgs {
     #[arg(short, long, value_enum, default_value_t = Format::Flac)]
     format: Format,
 
+    /// Quality of MP3 files.
+    #[arg(long, value_enum, default_value_t = Mp3Quality::V0)]
+    mp3_quality: Mp3Quality,
+
     /// Burst reads each sector once; secure re-reads until the audio is
     /// proven by AccurateRip or confirmed by identical reads.
     #[arg(short, long, value_enum, default_value_t = ReadMode::Secure)]
@@ -100,6 +104,21 @@ enum Format {
     Flac,
     /// Uncompressed, without any metadata.
     Wav,
+    /// Uncompressed (Apple), with tags and cover art.
+    Aiff,
+    /// Lossy, with tags and cover art.
+    Mp3,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Mp3Quality {
+    /// Variable bitrate, best quality (about 245 kbit/s).
+    V0,
+    /// Variable bitrate (about 190 kbit/s).
+    V2,
+    /// Constant 320 kbit/s.
+    #[value(name = "320")]
+    Cbr320,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -187,6 +206,13 @@ fn rip(args: &RipArgs) -> Result<()> {
     let format = match args.format {
         Format::Flac => session::Format::Flac,
         Format::Wav => session::Format::Wav,
+        Format::Aiff => session::Format::Aiff,
+        Format::Mp3 => session::Format::Mp3,
+    };
+    let mp3_quality = match args.mp3_quality {
+        Mp3Quality::V0 => mp3::Quality::V0,
+        Mp3Quality::V2 => mp3::Quality::V2,
+        Mp3Quality::Cbr320 => mp3::Quality::Cbr320,
     };
     println!("Drive    {} {} ({})", disc.drive.vendor, disc.drive.product, disc.drive.revision);
     println!("Mode     {}", session::read_mode_text(mode, !args.no_c2 && disc.c2()));
@@ -213,8 +239,8 @@ fn rip(args: &RipArgs) -> Result<()> {
         Some(p) => println!("AccurateRip  {} set(s) of checksums for this disc", p.len()),
         None => println!("AccurateRip  disc not in the database, rips cannot be verified"),
     }
-    let cover = match (&release, format) {
-        (Some(r), session::Format::Flac) if !args.no_cover => fetch_cover(r),
+    let cover = match &release {
+        Some(r) if format.has_tags() && !args.no_cover => fetch_cover(r),
         _ => None,
     };
     let naming = Naming { folder: args.folder.clone(), file: args.name.clone() };
@@ -223,6 +249,7 @@ fn rip(args: &RipArgs) -> Result<()> {
     let settings = session::Settings {
         output: args.output.clone(),
         format,
+        mp3_quality,
         mode,
         offset,
         c2: !args.no_c2,

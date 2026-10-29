@@ -19,7 +19,7 @@ use crate::metadata::{Release, musicbrainz};
 use crate::naming::Naming;
 use crate::rip::{self, Mode, Progress};
 use crate::toc::Toc;
-use crate::{Error, Result, cue, flac, gaps, log, tags, wav};
+use crate::{Error, Result, aiff, cue, flac, gaps, log, mp3, tags, wav};
 
 /// What we know about the disc in the drive.
 #[derive(Clone)]
@@ -71,6 +71,10 @@ pub enum Format {
     Flac,
     /// Uncompressed, without any metadata.
     Wav,
+    /// Uncompressed (Apple), with tags and cover art.
+    Aiff,
+    /// Lossy, with tags and cover art.
+    Mp3,
 }
 
 impl Format {
@@ -78,6 +82,22 @@ impl Format {
         match self {
             Format::Flac => "flac",
             Format::Wav => "wav",
+            Format::Aiff => "aiff",
+            Format::Mp3 => "mp3",
+        }
+    }
+
+    /// Whether the files hold tags and cover art.
+    pub fn has_tags(self) -> bool {
+        self != Format::Wav
+    }
+
+    /// File type in a cue sheet. FLAC files are conventionally called WAVE.
+    fn cue_type(self) -> &'static str {
+        match self {
+            Format::Flac | Format::Wav => "WAVE",
+            Format::Aiff => "AIFF",
+            Format::Mp3 => "MP3",
         }
     }
 }
@@ -86,6 +106,7 @@ pub struct Settings {
     /// Folder in which the album folder is created.
     pub output: PathBuf,
     pub format: Format,
+    pub mp3_quality: mp3::Quality,
     pub mode: Mode,
     pub offset: i32,
     /// Use C2 pointers if the drive has them.
@@ -201,21 +222,14 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
 
         let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
         let path = album_dir.join(&file_name);
-        let file = match settings.format {
-            Format::Flac => {
-                on_event(Event::Encoding { number });
-                let mut tags = tags::vorbis_comments(release, number as u32, audio_count as u32, &disc_id);
-                if let Some(isrc) = &isrc {
-                    tags.push(("ISRC", isrc.clone()));
-                }
-                flac::encode(&audio, &tags, settings.cover.as_ref().filter(|_| settings.embed_cover))?
-            }
-            Format::Wav => {
-                let mut file = Vec::with_capacity(audio.len() + 44);
-                wav::write(&mut file, &audio)?;
-                file
-            }
-        };
+        if settings.format != Format::Wav {
+            on_event(Event::Encoding { number });
+        }
+        let mut tags = tags::vorbis_comments(release, number as u32, audio_count as u32, &disc_id);
+        if let Some(isrc) = &isrc {
+            tags.push(("ISRC", isrc.clone()));
+        }
+        let file = encode(settings, &audio, &tags)?;
         fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
 
         let checksums = accuraterip::checksums(&audio, position + 1, audio_count);
@@ -242,7 +256,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         drive: &disc.drive,
         offset: settings.offset,
         read_mode: &read_mode,
-        format: settings.format.extension(),
+        format: &format_text(settings),
         toc,
         release,
         mcn: subcode.mcn.as_deref(),
@@ -262,7 +276,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     // A cue sheet of part of the disc would describe a disc that does not exist.
     let cue_path = if cue_tracks.len() == audio_count {
         let path = album_dir.join(format!("{base_name}.cue"));
-        let sheet = cue::cue_sheet(toc, release, subcode.mcn.as_deref(), &cue_tracks);
+        let sheet = cue::cue_sheet(toc, release, subcode.mcn.as_deref(), settings.format.cue_type(), &cue_tracks);
         fs::write(&path, sheet).map_err(|e| with_path(e, "cannot write", &path))?;
         Some(path)
     } else {
@@ -270,6 +284,33 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     };
 
     Ok(Outcome { album_dir, tracks: track_logs, log_path, cue_path })
+}
+
+/// A track's file in the chosen format, from its audio and Vorbis comments.
+fn encode(settings: &Settings, audio: &[u8], tags: &[(&str, String)]) -> Result<Vec<u8>> {
+    let cover = settings.cover.as_ref().filter(|_| settings.embed_cover);
+    let mut file = Vec::with_capacity(audio.len() / 2);
+    match settings.format {
+        Format::Flac => file = flac::encode(audio, tags, cover)?,
+        Format::Wav => wav::write(&mut file, audio)?,
+        Format::Aiff => {
+            let mut id3 = Vec::new();
+            tags::id3(tags, cover)
+                .write_to(&mut id3, id3::Version::Id3v24)
+                .map_err(|e| Error::Encode(format!("cannot write the ID3 tag: {e}")))?;
+            aiff::write(&mut file, audio, Some(&id3))?;
+        }
+        Format::Mp3 => file = mp3::encode(audio, settings.mp3_quality, &tags::id3(tags, cover))?,
+    }
+    Ok(file)
+}
+
+/// The output format as written in the log.
+fn format_text(settings: &Settings) -> String {
+    match settings.format {
+        Format::Mp3 => format!("mp3 (LAME {}, {})", mp3lame_encoder::mp3lame_version(), settings.mp3_quality.label()),
+        format => format.extension().to_string(),
+    }
 }
 
 /// What the sub-channel tells about the disc, beyond the TOC.

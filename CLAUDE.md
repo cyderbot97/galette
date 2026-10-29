@@ -22,7 +22,8 @@ Cargo workspace, edition 2024:
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
   - `rip.rs` — burst and secure reading (C2, comparison passes, re-reads).
   - `gaps.rs` — pregap detection from the Q sub-channel (binary search).
-  - `flac.rs`, `tags.rs`, `wav.rs`, `cue.rs`, `log.rs`, `naming.rs`.
+  - Output formats: `flac.rs`, `mp3.rs` (LAME, bundled C source via mp3lame-sys; the LAME tag is written over the first frame for gapless playback), `aiff.rs`, `wav.rs`. `session::Format` lists them; `session::encode` dispatches. `tags.rs` builds Vorbis comments (Picard names) and converts them to ID3v2.4 for MP3/AIFF.
+  - `cue.rs`, `log.rs`, `naming.rs`.
   - `session.rs` — the whole rip of a disc, emitting `Event`s; used by both CLI and GUI.
 - `crates/galette-cli` — binary `galette` (`galette info`, `galette rip`).
 - `crates/galette-gui` — Tauri v2, binary `galette-gui`. Frontend is plain HTML/CSS/JS in `ui/` (no Node.js, `withGlobalTauri`). Settings are stored in the app config dir (`settings.json`). A thread polls the drive (TEST UNIT READY every 1.5 s) to detect disc insertion.
@@ -61,6 +62,9 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 ## Roadmap
 
-- macOS: Intel / universal build (`--target universal-apple-darwin`), Developer ID signing and notarization.
-- Windows transport.
-- CTDB verification and repair, HTOA, CD-Text, pre-emphasis.
+`TODO.md` (French, for the user) lists postponed work and things the user has not tested yet: keep it up to date.
+
+- Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
+- Windows transport: later, once the app has matured.
+- More output formats, in this order: Opus (libopus, needs resampling to 48 kHz), ALAC (.m4a, own MP4 muxer), AAC (macOS only, AudioToolbox; option hidden on other OSes: user's requirement), WavPack.
+- CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.

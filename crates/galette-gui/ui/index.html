@@ -66,6 +66,8 @@
     <label>Format
       <select id="format">
         <option value="flac">FLAC</option>
+        <option value="mp3">MP3</option>
+        <option value="aiff">AIFF</option>
         <option value="wav">WAV</option>
       </select>
     </label>
@@ -112,8 +114,19 @@
       </fieldset>
 
       <fieldset>
+        <legend>Qualité</legend>
+        <label class="inline">MP3
+          <select id="pref-mp3-quality">
+            <option value="v0">VBR V0 (≈ 245 kbit/s, recommandé)</option>
+            <option value="v2">VBR V2 (≈ 190 kbit/s)</option>
+            <option value="cbr320">CBR 320 kbit/s</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
         <legend>Pochette et disque</legend>
-        <label class="inline"><input type="checkbox" id="pref-embed"> Intégrer la pochette dans les fichiers FLAC</label>
+        <label class="inline"><input type="checkbox" id="pref-embed"> Intégrer la pochette dans les fichiers (sauf WAV)</label>
         <label class="inline"><input type="checkbox" id="pref-save-cover"> Enregistrer la pochette (cover.jpg)</label>
         <label class="inline"><input type="checkbox" id="pref-eject"> Éjecter le disque à la fin du rip</label>
       </fieldset>

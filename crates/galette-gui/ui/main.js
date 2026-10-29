@@ -429,6 +429,7 @@ function openPrefs() {
   $("pref-offset-auto").textContent =
     disc?.offset != null ? `(AccurateRip : ${signed(disc.offset)})` : "(lecteur inconnu d'AccurateRip)";
   $("pref-c2").checked = prefs.c2;
+  $("pref-mp3-quality").value = prefs.mp3Quality;
   $("pref-embed").checked = prefs.embedCover;
   $("pref-save-cover").checked = prefs.saveCover;
   $("pref-eject").checked = prefs.ejectAfter;
@@ -453,6 +454,7 @@ $("prefs").addEventListener("close", () => {
   prefs.naming = { folder: $("pref-folder").value.trim(), file: $("pref-file").value.trim() };
   prefs.offset = $("pref-manual-offset").checked ? Number($("pref-offset").value) || 0 : null;
   prefs.c2 = $("pref-c2").checked;
+  prefs.mp3Quality = $("pref-mp3-quality").value;
   prefs.embedCover = $("pref-embed").checked;
   prefs.saveCover = $("pref-save-cover").checked;
   prefs.ejectAfter = $("pref-eject").checked;

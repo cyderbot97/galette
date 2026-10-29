@@ -24,7 +24,7 @@ use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
-use galette_core::{ids, log, toc};
+use galette_core::{ids, log, mp3, toc};
 
 #[derive(Default)]
 struct Shared {
@@ -44,6 +44,7 @@ struct Shared {
 struct Prefs {
     output: PathBuf,
     format: Format,
+    mp3_quality: mp3::Quality,
     secure: bool,
     naming: Naming,
     /// Read offset given by hand; `None` to take it from AccurateRip.
@@ -59,6 +60,7 @@ impl Default for Prefs {
         Self {
             output: PathBuf::new(),
             format: Format::Flac,
+            mp3_quality: mp3::Quality::default(),
             secure: true,
             naming: Naming::default(),
             offset: None,
@@ -226,13 +228,14 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
     let settings = session::Settings {
         output: prefs.output,
         format: prefs.format,
+        mp3_quality: prefs.mp3_quality,
         mode: if prefs.secure { rip::Mode::Secure } else { rip::Mode::Burst },
         offset,
         c2: prefs.c2,
         naming: prefs.naming,
         release: request.release,
         cover,
-        embed_cover: prefs.embed_cover && prefs.format == Format::Flac,
+        embed_cover: prefs.embed_cover && prefs.format.has_tags(),
         save_cover: prefs.save_cover,
         tracks: request.tracks,
         cancel: Some(Arc::clone(&state.cancel)),
