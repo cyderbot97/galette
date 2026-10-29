@@ -16,8 +16,10 @@ use crate::toc::{SECTOR_BYTES, Toc};
 use crate::{Error, Result};
 
 /// Sends one SCSI command to a device and reads its answer into `buf`.
-pub trait Transport {
-    /// Returns the number of bytes actually transferred.
+/// `Send` so that a rip can run in a background thread.
+pub trait Transport: Send {
+    /// Returns the number of bytes actually transferred. An empty `buf`
+    /// sends a command that transfers no data.
     fn read(&mut self, cdb: &[u8], buf: &mut [u8], timeout: Duration) -> Result<usize>;
 }
 
@@ -63,6 +65,13 @@ impl Drive {
         let mut buf = [0u8; mmc::CAPABILITIES_LEN];
         let len = self.transport.read(&mmc::mode_sense_capabilities_cdb(), &mut buf, Duration::from_secs(5))?;
         Ok(mmc::parse_capabilities(&buf[..len]))
+    }
+
+    /// Unlocks the tray and opens it.
+    pub fn eject(&mut self) -> Result<()> {
+        self.transport.read(&mmc::allow_removal_cdb(), &mut [], Duration::from_secs(5))?;
+        self.transport.read(&mmc::eject_cdb(), &mut [], Duration::from_secs(10))?;
+        Ok(())
     }
 
     pub fn read_toc(&mut self) -> Result<Toc> {

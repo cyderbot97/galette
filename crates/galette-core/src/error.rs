@@ -19,6 +19,9 @@ pub enum Error {
     #[error("network error: {0}")]
     Network(String),
 
+    #[error("cancelled")]
+    Cancelled,
+
     #[error("this feature is not supported on this platform yet")]
     Unsupported,
 }

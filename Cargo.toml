@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/galette-core", "crates/galette-cli"]
+members = ["crates/galette-core", "crates/galette-cli", "crates/galette-gui"]
 
 [workspace.package]
 version = "0.1.0"

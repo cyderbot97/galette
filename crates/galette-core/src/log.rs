@@ -65,7 +65,11 @@ impl RipLog<'_> {
         line(String::new());
         if let Some(r) = self.release {
             line(format!("{} / {}", r.artist, r.title));
-            line(format!("MusicBrainz release  https://musicbrainz.org/release/{}", r.id));
+            if r.id.is_empty() {
+                line("Metadata entered by hand".to_string());
+            } else {
+                line(format!("MusicBrainz release  https://musicbrainz.org/release/{}", r.id));
+            }
         } else {
             line("Unknown disc (not found on MusicBrainz)".to_string());
         }

@@ -1,0 +1,23 @@
+[package]
+name = "galette-gui"
+description = "Desktop application for Galette"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "galette-gui"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.23.1"
+galette-core = { path = "../galette-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tauri = "2.12.5"
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-opener = "2.7.2"
+
+[build-dependencies]
+tauri-build = "2.7.4"

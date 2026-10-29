@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Galette</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="icon.png" alt=""> Galette</div>
+    <div id="drive" class="drive"></div>
+    <div class="actions">
+      <button id="refresh" title="Relire le disque">↻ Actualiser</button>
+      <button id="eject" title="Ouvrir le tiroir">⏏ Éjecter</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="empty" class="empty">
+      <div class="disc-icon"></div>
+      <p id="empty-text">Insérez un CD audio puis cliquez sur Actualiser.</p>
+    </section>
+
+    <section id="album" hidden>
+      <div class="album-head">
+        <div class="cover"><img id="cover" alt="" hidden><span id="cover-none">Pas de pochette</span></div>
+        <div class="fields">
+          <label class="edition">Édition
+            <select id="release"></select>
+          </label>
+          <input id="album-artist" class="big" placeholder="Artiste" spellcheck="false">
+          <input id="album-title" class="big title" placeholder="Titre de l'album" spellcheck="false">
+          <div class="row">
+            <label>Année <input id="album-date" placeholder="AAAA" spellcheck="false"></label>
+          </div>
+          <div id="badges" class="badges"></div>
+        </div>
+      </div>
+
+      <div id="message" class="message" hidden></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="check"><input type="checkbox" id="check-all" checked></th>
+              <th class="num">#</th>
+              <th>Titre</th>
+              <th>Artiste</th>
+              <th class="length">Durée</th>
+              <th class="status">État</th>
+            </tr>
+          </thead>
+          <tbody id="tracks"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <label class="output">Dossier
+      <span id="output" class="path"></span>
+      <button id="browse">Parcourir…</button>
+    </label>
+    <label>Format
+      <select id="format">
+        <option value="flac">FLAC</option>
+        <option value="wav">WAV</option>
+      </select>
+    </label>
+    <label>Mode
+      <select id="mode">
+        <option value="secure">Sécurisé</option>
+        <option value="burst">Rapide</option>
+      </select>
+    </label>
+    <label id="offset-field" hidden>Décalage
+      <input id="offset" type="number" step="1" value="0">
+    </label>
+    <button id="rip" class="primary" disabled>Ripper</button>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

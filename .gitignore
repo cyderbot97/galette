@@ -2,3 +2,4 @@
 *.flac
 *.wav
 *.log
+/crates/galette-gui/gen

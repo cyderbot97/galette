@@ -13,7 +13,14 @@ vérifie le résultat avec AccurateRip et produit des fichiers FLAC correctement
 
 ## Essayer
 
-Il faut [Rust](https://rustup.rs).
+Il faut [Rust](https://rustup.rs). Pour l'application graphique sous Linux (Debian/Ubuntu) :
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+cargo run --release -p galette-gui
+```
+
+En ligne de commande :
 
 ```sh
 cargo run -p galette-cli -- info                    # CD dans /dev/sr0
@@ -56,11 +63,15 @@ crates/
                        communes à tous les OS
       linux.rs         envoi des commandes via l'ioctl SG_IO
     src/metadata/      métadonnées (MusicBrainz) et pochettes (Cover Art Archive)
+    src/session.rs     déroulé complet d'un rip, partagé par toutes les interfaces
   galette-cli/         interface en ligne de commande
+  galette-gui/         application graphique (Tauri)
+    src/main.rs        commandes appelées par la fenêtre, rip en arrière-plan
+    ui/                la fenêtre : HTML, CSS et JavaScript, sans framework
 ```
 
-Le moteur ne dépend d'aucune interface : la ligne de commande et la future
-application graphique (Tauri) l'utilisent de la même manière. Pour porter Galette
+Le moteur ne dépend d'aucune interface : la ligne de commande et l'application
+graphique l'utilisent de la même manière. Pour porter Galette
 sur un nouvel OS, il suffit d'implémenter le trait `drive::Transport`, qui envoie
 une commande SCSI au lecteur.
 
@@ -74,6 +85,7 @@ une commande SCSI au lecteur.
 - [x] Mode sécurisé : relectures, purge du cache, erreurs C2
 - [x] Encodage FLAC + tags + pochette (Cover Art Archive)
 - [x] Fichier `.cue` (pré-gaps, ISRC, MCN), log de rip
-- [ ] Application graphique (Tauri)
+- [x] Application graphique (Tauri) : édition des métadonnées, choix de l'édition, progression
+- [ ] Détection automatique de l'insertion d'un disque, réglages, paquets d'installation
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), macOS (IOKit)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation

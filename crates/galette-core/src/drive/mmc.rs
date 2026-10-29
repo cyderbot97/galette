@@ -6,6 +6,8 @@ use crate::toc::{Toc, Track};
 use crate::{Error, Result};
 
 const INQUIRY: u8 = 0x12;
+const START_STOP_UNIT: u8 = 0x1B;
+const PREVENT_ALLOW_MEDIUM_REMOVAL: u8 = 0x1E;
 const MODE_SENSE_10: u8 = 0x5A;
 const READ_SUB_CHANNEL: u8 = 0x42;
 const READ_TOC: u8 = 0x43;
@@ -18,6 +20,16 @@ const CONTROL_DATA: u8 = 0x04;
 
 /// Header + 99 tracks + lead-out, 8 bytes each.
 pub const TOC_BUFFER_LEN: usize = 4 + 100 * 8;
+
+/// PREVENT ALLOW MEDIUM REMOVAL, allowing it.
+pub fn allow_removal_cdb() -> [u8; 6] {
+    [PREVENT_ALLOW_MEDIUM_REMOVAL, 0, 0, 0, 0, 0]
+}
+
+/// START STOP UNIT with LoEj set and Start cleared: opens the tray.
+pub fn eject_cdb() -> [u8; 6] {
+    [START_STOP_UNIT, 0, 0, 0, 0x02, 0]
+}
 
 /// Standard INQUIRY data up to the product revision.
 pub const INQUIRY_LEN: usize = 36;

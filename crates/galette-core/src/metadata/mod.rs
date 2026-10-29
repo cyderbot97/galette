@@ -3,9 +3,9 @@
 pub mod coverart;
 pub mod musicbrainz;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Release {
     /// Identifier at the source (MusicBrainz release MBID).
     pub id: String,
@@ -26,7 +26,7 @@ pub struct Release {
     pub tracks: Vec<TrackInfo>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
     /// Identifier of the track on this release.
     pub id: String,

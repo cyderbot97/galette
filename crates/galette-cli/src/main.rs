@@ -212,6 +212,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         release,
         cover,
         tracks: args.tracks.clone(),
+        cancel: None,
     };
     let started = Instant::now();
     let mut label = String::new();

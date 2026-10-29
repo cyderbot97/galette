@@ -12,6 +12,7 @@ use crate::error::ScsiError;
 use crate::{Error, Result};
 
 const SG_IO: libc::c_ulong = 0x2285;
+const SG_DXFER_NONE: libc::c_int = -1;
 const SG_DXFER_FROM_DEV: libc::c_int = -3;
 const SENSE_LEN: usize = 32;
 
@@ -63,7 +64,7 @@ impl Transport for SgTransport {
         let mut sense = [0u8; SENSE_LEN];
         let mut hdr = SgIoHdr {
             interface_id: b'S' as libc::c_int,
-            dxfer_direction: SG_DXFER_FROM_DEV,
+            dxfer_direction: if buf.is_empty() { SG_DXFER_NONE } else { SG_DXFER_FROM_DEV },
             cmd_len: cdb.len() as u8,
             mx_sb_len: SENSE_LEN as u8,
             iovec_count: 0,

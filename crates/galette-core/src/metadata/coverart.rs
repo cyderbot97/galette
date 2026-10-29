@@ -38,6 +38,9 @@ impl CoverArt {
 /// The front cover of the release, or else of its release group (the
 /// artwork is often uploaded for only one edition of an album).
 pub fn fetch_front(release: &Release) -> Result<Option<CoverArt>> {
+    if release.id.is_empty() {
+        return Ok(None);
+    }
     let agent = http::agent();
     let mut urls = vec![format!("{API}/release/{}/front-{SIZE}", release.id)];
     if let Some(group) = &release.release_group_id {

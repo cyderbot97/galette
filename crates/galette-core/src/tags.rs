@@ -22,8 +22,9 @@ pub fn vorbis_comments(
         return tags;
     };
 
+    // Metadata entered by hand has empty fields and identifiers.
     let mut add = |key, value: Option<&String>| {
-        if let Some(value) = value {
+        if let Some(value) = value.filter(|v| !v.is_empty()) {
             tags.push((key, value.clone()));
         }
     };
@@ -50,7 +51,7 @@ pub fn vorbis_comments(
         }
     }
     for id in &release.artist_ids {
-        tags.push(("MUSICBRAINZ_ALBUMARTISTID", id.clone()));
+        add("MUSICBRAINZ_ALBUMARTISTID", Some(id));
     }
     tags
 }

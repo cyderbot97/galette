@@ -4,6 +4,8 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +21,7 @@ use crate::toc::Toc;
 use crate::{Error, Result, cue, flac, gaps, log, tags, wav};
 
 /// What we know about the disc in the drive.
+#[derive(Clone)]
 pub struct Disc {
     pub drive: DriveInfo,
     pub capabilities: Option<Capabilities>,
@@ -89,6 +92,8 @@ pub struct Settings {
     pub cover: Option<CoverArt>,
     /// Track numbers to rip, all of them if empty.
     pub tracks: Vec<u8>,
+    /// Set from another thread to stop the rip.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 pub enum Event<'a> {
@@ -165,6 +170,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         offset: settings.offset,
         c2: disc.c2(),
         cache_kib: disc.capabilities.map_or(0, |c| c.buffer_kib as u32),
+        cancel: settings.cancel.as_deref(),
     };
     let mut track_logs = Vec::new();
     let mut cue_tracks = Vec::new();

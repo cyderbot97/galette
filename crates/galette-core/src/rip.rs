@@ -9,8 +9,9 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::Result;
+use crate::{Error, Result};
 use crate::drive::{Drive, mmc};
 use crate::toc::{SECTOR_BYTES, Toc};
 
@@ -38,7 +39,7 @@ pub enum Mode {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
+pub struct Options<'a> {
     pub mode: Mode,
     /// Read offset of the drive, in samples.
     pub offset: i32,
@@ -46,6 +47,8 @@ pub struct Options {
     pub c2: bool,
     /// Size of the drive's read cache.
     pub cache_kib: u32,
+    /// Set from another thread to stop the rip as soon as possible.
+    pub cancel: Option<&'a AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,12 +105,12 @@ pub fn read_track(
     drive: &mut Drive,
     toc: &Toc,
     index: usize,
-    options: Options,
+    options: Options<'_>,
     is_accurate: &mut dyn FnMut(&[u8]) -> bool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<TrackRead> {
     let span = Span::new(toc, index, options.offset);
-    let mut reader = Reader { drive, c2: options.c2 };
+    let mut reader = Reader { drive, c2: options.c2, cancel: options.cancel };
 
     let first = reader.read(span.sectors.clone(), &mut |f| progress(Progress::Reading(f)))?;
     let audio = span.crop(&first.data);
@@ -250,6 +253,7 @@ impl Pass {
 struct Reader<'a> {
     drive: &'a mut Drive,
     c2: bool,
+    cancel: Option<&'a AtomicBool>,
 }
 
 impl Reader<'_> {
@@ -258,6 +262,9 @@ impl Reader<'_> {
         let mut pass = Pass { data: vec![0; count * SECTOR_BYTES], flags: vec![Flag::Good; count], first_lba: sectors.start };
         let mut lba = sectors.start;
         while lba < sectors.end {
+            if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                return Err(Error::Cancelled);
+            }
             let n = SECTORS_PER_READ.min(sectors.end - lba);
             let i = (lba - sectors.start) as usize;
             if self.read_chunk(lba, n, &mut pass, i).is_err() {
@@ -420,7 +427,7 @@ mod tests {
     fn rip(disc: FakeDisc, index: usize, offset: i32, mode: Mode, accurate: bool) -> TrackRead {
         let toc = Toc::parse_musicbrainz(TOC).unwrap();
         let mut drive = Drive::new(Box::new(disc));
-        let options = Options { mode, offset, c2: true, cache_kib: 0 };
+        let options = Options { mode, offset, c2: true, cache_kib: 0, cancel: None };
         read_track(&mut drive, &toc, index, options, &mut |_| accurate, &mut |_| {}).unwrap()
     }
 
@@ -500,7 +507,7 @@ mod tests {
         disc.damage.insert(60, Damage::FlaggedButRight);
         let toc = Toc::parse_musicbrainz(TOC).unwrap();
         let mut drive = Drive::new(Box::new(disc));
-        let options = Options { mode: Mode::Secure, offset: 0, c2: true, cache_kib: 0 };
+        let options = Options { mode: Mode::Secure, offset: 0, c2: true, cache_kib: 0, cancel: None };
         let expected = expected_track_2();
         let mut is_accurate = |audio: &[u8]| samples(audio) == expected;
         let read = read_track(&mut drive, &toc, 1, options, &mut is_accurate, &mut |_| {}).unwrap();
@@ -516,6 +523,16 @@ mod tests {
         let read = rip(disc, 1, 0, Mode::Burst, false);
         assert_eq!(read.report.unreadable, [80]);
         assert_eq!(read.report.passes, 1);
+    }
+
+    #[test]
+    fn can_be_cancelled() {
+        let toc = Toc::parse_musicbrainz(TOC).unwrap();
+        let mut drive = Drive::new(Box::new(FakeDisc::default()));
+        let cancel = AtomicBool::new(true);
+        let options = Options { mode: Mode::Secure, offset: 0, c2: true, cache_kib: 0, cancel: Some(&cancel) };
+        let result = read_track(&mut drive, &toc, 1, options, &mut |_| false, &mut |_| {});
+        assert!(matches!(result, Err(Error::Cancelled)));
     }
 
     #[test]
