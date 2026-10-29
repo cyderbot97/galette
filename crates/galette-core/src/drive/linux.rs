@@ -7,8 +7,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::time::Duration;
 
-use super::Transport;
-use crate::error::ScsiError;
+use super::{Transport, sense_error};
 use crate::{Error, Result};
 
 const SG_IO: libc::c_ulong = 0x2285;
@@ -113,14 +112,4 @@ impl Transport for SgTransport {
         }
         Ok(buf.len() - hdr.resid.max(0) as usize)
     }
-}
-
-/// Decodes fixed (0x70/0x71) or descriptor (0x72/0x73) format sense data.
-fn sense_error(opcode: u8, sense: &[u8]) -> Error {
-    let byte = |i: usize| sense.get(i).copied().unwrap_or(0);
-    let (sense_key, asc, ascq) = match byte(0) & 0x7F {
-        0x72 | 0x73 => (byte(1) & 0x0F, byte(2), byte(3)),
-        _ => (byte(2) & 0x0F, byte(12), byte(13)),
-    };
-    Error::Scsi(ScsiError { opcode, sense_key, asc, ascq })
 }

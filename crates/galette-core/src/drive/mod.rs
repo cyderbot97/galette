@@ -9,9 +9,12 @@ pub mod mmc;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 use std::time::Duration;
 
+use crate::error::ScsiError;
 use crate::toc::{SECTOR_BYTES, Toc};
 use crate::{Error, Result};
 
@@ -50,13 +53,19 @@ impl Drive {
     }
 
     /// Opens the drive at `device`, or the platform's default drive.
+    /// On macOS, `device` names the disc ("disk4") and may be empty.
     pub fn open(device: Option<&str>) -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
             let transport = linux::SgTransport::open(device.unwrap_or(default_device()))?;
             Ok(Self::new(Box::new(transport)))
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            let transport = macos::IoKitTransport::open(device.filter(|d| !d.is_empty()))?;
+            Ok(Self::new(Box::new(transport)))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = device;
             Err(Error::Unsupported)
@@ -150,4 +159,15 @@ impl Drive {
 
 pub fn default_device() -> &'static str {
     if cfg!(target_os = "linux") { "/dev/sr0" } else { "" }
+}
+
+/// Decodes fixed (0x70/0x71) or descriptor (0x72/0x73) format sense data.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+fn sense_error(opcode: u8, sense: &[u8]) -> Error {
+    let byte = |i: usize| sense.get(i).copied().unwrap_or(0);
+    let (sense_key, asc, ascq) = match byte(0) & 0x7F {
+        0x72 | 0x73 => (byte(1) & 0x0F, byte(2), byte(3)),
+        _ => (byte(2) & 0x0F, byte(12), byte(13)),
+    };
+    Error::Scsi(ScsiError { opcode, sense_key, asc, ascq })
 }

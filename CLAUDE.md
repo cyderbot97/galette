@@ -16,7 +16,7 @@ Secure audio CD ripper, free software (GPL-3.0-or-later): EAC-quality ripping wi
 Cargo workspace, edition 2024:
 
 - `crates/galette-core` — the engine (no UI).
-  - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport. **macOS (IOKit) and Windows (IOCTL_SCSI_PASS_THROUGH_DIRECT) transports are not written yet**: on other OSes `Drive::open` returns `Error::Unsupported`, everything else compiles.
+  - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport; `macos.rs` is the IOKit SCSITask transport (hand-written FFI, no extra crate). **The Windows transport (IOCTL_SCSI_PASS_THROUGH_DIRECT) is not written yet**: there `Drive::open` returns `Error::Unsupported`, everything else compiles.
   - `toc.rs`, `ids.rs` — TOC, MusicBrainz / FreeDB / AccurateRip disc IDs.
   - `metadata/` — MusicBrainz lookup, Cover Art Archive.
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
@@ -37,6 +37,8 @@ cargo run --release -p galette-cli -- info
 cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux
 ```
 
+On macOS, build outside `~/Documents` (see below): `export CARGO_TARGET_DIR=~/.cache/galette-target`.
+
 ## Hard-won knowledge (do not undo)
 
 - **Open the drive read-write when possible** (fallback read-only): Linux refuses non-read commands such as eject on a read-only descriptor.
@@ -46,14 +48,18 @@ cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux
 - AccurateRip skips 5×588−1 samples at the disc edges; Enhanced CDs use data start − 11400 as the audio lead-out.
 - Secure mode: if the burst pass is C2-clean and matches AccurateRip, stop; otherwise flush the cache, compare a second pass, re-read differing/C2 sectors (max 20 rounds, 3 identical clean reads to confirm). If the final audio matches AccurateRip, cleared positions are not reported as suspicious.
 - Partial rips (some tracks only) write their log under a distinct name and no cue sheet, so they never overwrite a full rip's files.
+- **macOS: exclusive access is lazy.** Raw SCSI commands need `ObtainExclusiveAccess`, refused while the disc is mounted (cddafs), so `macos.rs` unmounts it via Disk Arbitration first. TEST UNIT READY goes through the shared `MMCDeviceInterface` instead, so the GUI's 1.5 s polling never unmounts the disc. Dropping the transport releases the drive and macOS remounts the disc by itself.
+- **macOS: a binary under `~/Documents` cannot open the drive** (`IOCreatePlugInInterfaceForService` → 0xE00002BE kIOReturnNoResources): opening the MMC user client makes `authd` check the binary, and TCC forbids authd from reading `~/Documents`. Hence `CARGO_TARGET_DIR` elsewhere. An app in /Applications is not affected.
+- **macOS: IOKit vtables must match `SCSITaskLib.h` slot by slot.** A first version missed `GetCommandDescriptorBlockSize` and `GetTimeoutDuration` (not returning IOReturn, so a grep skipped them): every call landed on the wrong function, silently. Check offsets with a C `offsetof` program when touching them.
+- **macOS: `GetSCSIServiceResponse` must be checked** after `ExecuteTaskSync`: not TASK_COMPLETE → `DriveNotResponding`; a rejected command completes with CHECK CONDITION status and sense data.
 - Tauri bundle category must be a valid Tauri value (`Music`); icon file names must be plain sizes (`256x256.png`, not `@2x`).
 
 ## Tested hardware
 
-ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6. Debian KDE. Verified discs include rips matching AccurateRip 10/10 and 12/12, a damaged disc (suspicious sectors correctly reported), and discs absent from AccurateRip.
+ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6. Debian KDE; macOS 27 on Apple Silicon (ASUS, accurate rip with C2, ISRC, MCN). Verified discs include rips matching AccurateRip 10/10 and 12/12, a damaged disc (suspicious sectors correctly reported), and discs absent from AccurateRip.
 
 ## Roadmap
 
-- macOS transport (IOKit, SCSITaskDeviceInterface / exclusive access, which requires unmounting the disc via DiskArbitration) — next.
+- macOS: test the GUI and full-disc rips, then package a .app/.dmg (`cargo tauri build`).
 - Windows transport.
 - CTDB verification and repair, HTOA, CD-Text, pre-emphasis.
