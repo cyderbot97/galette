@@ -102,6 +102,8 @@ struct RipArgs {
 enum Format {
     /// Lossless and compressed, with tags and cover art.
     Flac,
+    /// Apple Lossless (.m4a), with tags and cover art.
+    Alac,
     /// Uncompressed, without any metadata.
     Wav,
     /// Uncompressed (Apple), with tags and cover art.
@@ -205,6 +207,7 @@ fn rip(args: &RipArgs) -> Result<()> {
     };
     let format = match args.format {
         Format::Flac => session::Format::Flac,
+        Format::Alac => session::Format::Alac,
         Format::Wav => session::Format::Wav,
         Format::Aiff => session::Format::Aiff,
         Format::Mp3 => session::Format::Mp3,

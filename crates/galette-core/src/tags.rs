@@ -1,7 +1,8 @@
 //! Tags of a ripped track, named as MusicBrainz Picard writes them in Vorbis
 //! comments (<https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html>),
 //! so that players and library managers recognize them. MP3 and AIFF files
-//! get the same tags as ID3v2.4 frames, again as Picard names them.
+//! get the same tags as ID3v2.4 frames and .m4a files as iTunes atoms, again
+//! as Picard names them.
 
 use id3::frame::{Content, ExtendedText, Picture, PictureType, UniqueFileIdentifier};
 use id3::{Frame, TagLike};
@@ -87,6 +88,25 @@ pub fn vorbis_comments(
     tags
 }
 
+/// Vorbis comments stored in the iTunes atoms of the same meaning.
+const MP4_STANDARD: [(&str, mp4ameta::Fourcc); 5] = [
+    ("TITLE", mp4ameta::ident::TITLE),
+    ("ARTIST", mp4ameta::ident::ARTIST),
+    ("ALBUM", mp4ameta::ident::ALBUM),
+    ("ALBUMARTIST", mp4ameta::ident::ALBUM_ARTIST),
+    ("DATE", mp4ameta::ident::YEAR),
+];
+
+/// Vorbis comments stored in freeform (`----:com.apple.iTunes:…`) atoms, in
+/// addition to those of [`ID3_USER`], which have the same names.
+const MP4_FREEFORM: [(&str, &str); 5] = [
+    ("ORIGINALDATE", "ORIGINALDATE"),
+    ("LABEL", "LABEL"),
+    ("MEDIA", "MEDIA"),
+    ("ISRC", "ISRC"),
+    ("MUSICBRAINZ_TRACKID", "MusicBrainz Track Id"),
+];
+
 /// The Vorbis comments `tags` as an ID3v2.4 tag, with the cover if given.
 pub fn id3(tags: &[(&str, String)], cover: Option<&CoverArt>) -> id3::Tag {
     // ID3v2.4 separates the values of a frame with a null character.
@@ -123,6 +143,36 @@ pub fn id3(tags: &[(&str, String)], cover: Option<&CoverArt>) -> id3::Tag {
             description: String::new(),
             data: cover.data.clone(),
         });
+    }
+    tag
+}
+
+/// The Vorbis comments `tags` as iTunes atoms for .m4a files, with the cover if given.
+pub fn mp4(tags: &[(&str, String)], cover: Option<&CoverArt>) -> mp4ameta::Tag {
+    use mp4ameta::{Data, FreeformIdent, Img};
+    let values = |key: &str| -> Vec<String> { tags.iter().filter(|(k, _)| *k == key).map(|(_, v)| v.clone()).collect() };
+    let number = |key: &str| values(key).first().and_then(|v| v.parse::<u16>().ok());
+
+    let mut tag = mp4ameta::Tag::default();
+    for (key, ident) in MP4_STANDARD {
+        for value in values(key) {
+            tag.add_data(ident, Data::Utf8(value));
+        }
+    }
+    for (key, name) in ID3_USER.into_iter().chain(MP4_FREEFORM) {
+        for value in values(key) {
+            tag.add_data(FreeformIdent::new_static("com.apple.iTunes", name), Data::Utf8(value));
+        }
+    }
+    if let Some(track) = number("TRACKNUMBER") {
+        tag.set_track(track, number("TRACKTOTAL").unwrap_or(0));
+    }
+    if let Some(disc) = number("DISCNUMBER") {
+        tag.set_disc(disc, number("DISCTOTAL").unwrap_or(0));
+    }
+    if let Some(cover) = cover {
+        let data = cover.data.clone();
+        tag.add_artwork(if cover.mime_type == "image/png" { Img::png(data) } else { Img::jpeg(data) });
     }
     tag
 }
@@ -189,5 +239,21 @@ mod tests {
         let artist_ids = tag.extended_texts().find(|t| t.description == "MusicBrainz Artist Id").unwrap();
         assert_eq!(artist_ids.value, "a\0b");
         assert!(tag.unique_file_identifiers().any(|u| u.identifier == b"rec"));
+    }
+
+    #[test]
+    fn mp4_atoms() {
+        let tags = vec![
+            ("TITLE", "Song".to_string()),
+            ("TRACKNUMBER", "3".into()),
+            ("TRACKTOTAL", "12".into()),
+            ("MUSICBRAINZ_ARTISTID", "a".into()),
+            ("MUSICBRAINZ_ARTISTID", "b".into()),
+        ];
+        let tag = mp4(&tags, None);
+        assert_eq!(tag.title(), Some("Song"));
+        assert_eq!(tag.track(), (Some(3), Some(12)));
+        let ident = mp4ameta::FreeformIdent::new_static("com.apple.iTunes", "MusicBrainz Artist Id");
+        assert_eq!(tag.strings_of(&ident).collect::<Vec<_>>(), ["a", "b"]);
     }
 }

@@ -22,7 +22,7 @@ Cargo workspace, edition 2024:
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
   - `rip.rs` — burst and secure reading (C2, comparison passes, re-reads).
   - `gaps.rs` — pregap detection from the Q sub-channel (binary search).
-  - Output formats: `flac.rs`, `mp3.rs` (LAME, bundled C source via mp3lame-sys; the LAME tag is written over the first frame for gapless playback), `aiff.rs`, `wav.rs`. `session::Format` lists them; `session::encode` dispatches. `tags.rs` builds Vorbis comments (Picard names) and converts them to ID3v2.4 for MP3/AIFF.
+  - Output formats: `flac.rs`, `alac.rs` (alac-encoder, verified by decoding with the `alac` crate; `m4a.rs` is our own minimal MP4 muxer, reusable for AAC; tags added by mp4ameta), `mp3.rs` (LAME, bundled C source via mp3lame-sys; the LAME tag is written over the first frame for gapless playback), `aiff.rs`, `wav.rs`. `session::Format` lists them; `session::encode` dispatches. `tags.rs` builds Vorbis comments (Picard names) and converts them to ID3v2.4 for MP3/AIFF and to iTunes atoms for .m4a.
   - `cue.rs`, `log.rs`, `naming.rs`.
   - `session.rs` — the whole rip of a disc, emitting `Event`s; used by both CLI and GUI.
 - `crates/galette-cli` — binary `galette` (`galette info`, `galette rip`).
@@ -66,5 +66,5 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
 - Windows transport: later, once the app has matured.
-- More output formats, in this order: Opus (libopus, needs resampling to 48 kHz), ALAC (.m4a, own MP4 muxer), AAC (macOS only, AudioToolbox; option hidden on other OSes: user's requirement), WavPack.
+- More output formats, in this order (Opus: user decided against it): AAC (macOS only, AudioToolbox; option hidden on other OSes: user's requirement), WavPack.
 - CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.

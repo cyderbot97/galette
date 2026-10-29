@@ -19,7 +19,7 @@ use crate::metadata::{Release, musicbrainz};
 use crate::naming::Naming;
 use crate::rip::{self, Mode, Progress};
 use crate::toc::Toc;
-use crate::{Error, Result, aiff, cue, flac, gaps, log, mp3, tags, wav};
+use crate::{Error, Result, aiff, alac, cue, flac, gaps, log, mp3, tags, wav};
 
 /// What we know about the disc in the drive.
 #[derive(Clone)]
@@ -69,6 +69,8 @@ impl Disc {
 pub enum Format {
     /// Lossless and compressed, with tags and cover art.
     Flac,
+    /// Apple Lossless in an .m4a file, with tags and cover art.
+    Alac,
     /// Uncompressed, without any metadata.
     Wav,
     /// Uncompressed (Apple), with tags and cover art.
@@ -81,6 +83,7 @@ impl Format {
     pub fn extension(self) -> &'static str {
         match self {
             Format::Flac => "flac",
+            Format::Alac => "m4a",
             Format::Wav => "wav",
             Format::Aiff => "aiff",
             Format::Mp3 => "mp3",
@@ -95,7 +98,7 @@ impl Format {
     /// File type in a cue sheet. FLAC files are conventionally called WAVE.
     fn cue_type(self) -> &'static str {
         match self {
-            Format::Flac | Format::Wav => "WAVE",
+            Format::Flac | Format::Alac | Format::Wav => "WAVE",
             Format::Aiff => "AIFF",
             Format::Mp3 => "MP3",
         }
@@ -292,6 +295,7 @@ fn encode(settings: &Settings, audio: &[u8], tags: &[(&str, String)]) -> Result<
     let mut file = Vec::with_capacity(audio.len() / 2);
     match settings.format {
         Format::Flac => file = flac::encode(audio, tags, cover)?,
+        Format::Alac => file = alac::encode(audio, &tags::mp4(tags, cover))?,
         Format::Wav => wav::write(&mut file, audio)?,
         Format::Aiff => {
             let mut id3 = Vec::new();
@@ -309,6 +313,7 @@ fn encode(settings: &Settings, audio: &[u8], tags: &[(&str, String)]) -> Result<
 fn format_text(settings: &Settings) -> String {
     match settings.format {
         Format::Mp3 => format!("mp3 (LAME {}, {})", mp3lame_encoder::mp3lame_version(), settings.mp3_quality.label()),
+        Format::Alac => "alac (m4a)".to_string(),
         format => format.extension().to_string(),
     }
 }

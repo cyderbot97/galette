@@ -5,7 +5,7 @@ Ripper de CD audio **sécurisé**, **libre** (GPL-3.0) et **multiplateforme** (L
 L'objectif : la fiabilité d'EAC et la simplicité de dBpoweramp CD Ripper.
 On insère un CD, Galette le reconnaît sur MusicBrainz, extrait l'audio sans erreur,
 vérifie le résultat avec AccurateRip et produit des fichiers correctement tagués
-(FLAC, MP3, AIFF ou WAV).
+(FLAC, ALAC, MP3, AIFF ou WAV).
 
 > État : début de développement. Sous Linux et macOS, Galette reconnaît le CD sur MusicBrainz,
 > l'extrait avec correction du décalage du lecteur, vérifie chaque piste avec
@@ -66,6 +66,7 @@ cargo run --release -p galette-cli -- rip -o ~/Musique             # FLAC + tags
 cargo run --release -p galette-cli -- rip -o ~/Musique --format wav
 cargo run --release -p galette-cli -- rip -o ~/Musique --format mp3 --mp3-quality v0   # ou v2, 320
 cargo run --release -p galette-cli -- rip -o ~/Musique --format aiff
+cargo run --release -p galette-cli -- rip -o ~/Musique --format alac   # Apple Lossless (.m4a)
 cargo run --release -p galette-cli -- rip -o ~/Musique --mode burst  # une seule lecture
 cargo run --release -p galette-cli -- rip --folder "{albumartist}/{year} - {album}" --name "{track} {title}"
 # Sans lecteur, à partir d'une TOC au format MusicBrainz :
@@ -94,8 +95,10 @@ crates/
     src/accuraterip.rs sommes de contrôle v1/v2, base de décalages des lecteurs
     src/flac.rs        encodage FLAC (vérifié par décodage), tags et pochette intégrés
     src/mp3.rs         encodage MP3 avec LAME (VBR V0/V2 ou CBR 320, lecture sans blanc)
+    src/alac.rs        encodage ALAC / Apple Lossless (vérifié par décodage)
+    src/m4a.rs         conteneur MPEG-4 (.m4a)
     src/aiff.rs        écriture des fichiers AIFF
-    src/tags.rs        tags au format de MusicBrainz Picard (Vorbis et ID3v2.4)
+    src/tags.rs        tags au format de MusicBrainz Picard (Vorbis, ID3v2.4, iTunes)
     src/gaps.rs        détection des pré-gaps par le sous-canal Q
     src/cue.rs         fichier .cue (un fichier par piste, pré-gaps en fin de piste précédente)
     src/log.rs         log de rip
@@ -135,6 +138,7 @@ une commande SCSI au lecteur.
 - [x] Paquets d'installation Linux (.deb, AppImage)
 - [x] macOS (IOKit), application .app / .dmg
 - [x] MP3 (LAME) et AIFF, tags ID3
-- [ ] Opus, ALAC, WavPack, AAC (macOS uniquement)
+- [x] ALAC (Apple Lossless), tags iTunes
+- [ ] WavPack, AAC (macOS uniquement)
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation

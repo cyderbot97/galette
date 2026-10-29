@@ -7,6 +7,7 @@
 
 pub mod accuraterip;
 pub mod aiff;
+pub mod alac;
 pub mod cue;
 pub mod drive;
 pub mod error;
@@ -15,6 +16,7 @@ pub mod gaps;
 mod http;
 pub mod ids;
 pub mod log;
+mod m4a;
 pub mod metadata;
 pub mod mp3;
 pub mod naming;

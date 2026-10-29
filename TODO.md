@@ -21,8 +21,6 @@ Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
 ## Nouveaux formats (dans cet ordre)
 
-- [ ] Opus (libopus, rééchantillonnage en 48 kHz)
-- [ ] ALAC (`.m4a`, Apple Lossless, toutes plateformes)
 - [ ] AAC (`.m4a`, **macOS uniquement**, l'option doit être absente ailleurs)
 - [ ] WavPack
 

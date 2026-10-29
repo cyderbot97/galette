@@ -18,6 +18,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alac"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498a34d3cad5f3b23cc217ab489424ebcfffed186e30ad5ac02624e50df2c2b8"
+
+[[package]]
+name = "alac-encoder"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a32a4e6eec2ede679898711c25120685f4cd472be57be0b98642312232b9f29"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1344,6 +1359,8 @@ dependencies = [
 name = "galette-core"
 version = "0.2.0"
 dependencies = [
+ "alac",
+ "alac-encoder",
  "base64 0.23.1",
  "claxon",
  "crc32fast",
@@ -1352,6 +1369,7 @@ dependencies = [
  "libc",
  "metaflac",
  "mp3lame-encoder",
+ "mp4ameta",
  "serde",
  "serde_json",
  "sha1",
@@ -2402,6 +2420,12 @@ dependencies = [
  "cc",
  "libc",
 ]
+
+[[package]]
+name = "mp4ameta"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "453e991b2efe96c288cbc2d03a19e353504294559ecb6c03067fff5bd824616d"
 
 [[package]]
 name = "muda"
