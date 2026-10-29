@@ -199,7 +199,7 @@ struct RipRequest {
 
 /// What the page receives while ripping.
 #[derive(Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum RipEvent {
     Status { message: String },
     Warning { message: String },

@@ -353,7 +353,11 @@ function setMessage(text, kind = "info", withFolder = false) {
   if (withFolder) {
     const button = document.createElement("button");
     button.textContent = "Ouvrir le dossier";
-    button.addEventListener("click", () => invoke("open_folder", { path: lastAlbumDir }));
+    button.addEventListener("click", () =>
+      invoke("open_folder", { path: lastAlbumDir }).catch((e) =>
+        setMessage(`Impossible d'ouvrir le dossier : ${e}`, "bad"),
+      ),
+    );
     box.append(button);
   }
 }
