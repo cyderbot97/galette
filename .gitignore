@@ -3,3 +3,4 @@
 *.wav
 *.log
 /crates/galette-gui/gen
+/attic

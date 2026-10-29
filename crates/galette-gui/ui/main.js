@@ -426,6 +426,7 @@ function showPrefs() {
   $("output").title = prefs.output;
   $("format").value = prefs.format;
   $("mode").value = prefs.secure ? "secure" : "burst";
+  applyTheme(prefs.theme);
   showDrive();
 }
 
@@ -442,6 +443,7 @@ function openPrefs() {
   $("pref-embed").checked = prefs.embedCover;
   $("pref-save-cover").checked = prefs.saveCover;
   $("pref-eject").checked = prefs.ejectAfter;
+  $("pref-theme").value = prefs.theme;
   updatePreview();
   $("prefs").showModal();
 }
@@ -457,9 +459,21 @@ $("settings").addEventListener("click", openPrefs);
 $("pref-folder").addEventListener("input", updatePreview);
 $("pref-file").addEventListener("input", updatePreview);
 $("pref-manual-offset").addEventListener("change", (e) => ($("pref-offset").disabled = !e.target.checked));
+// The theme shows at once; cancelling the dialog puts the previous one back.
+$("pref-theme").addEventListener("change", (e) => applyTheme(e.target.value));
+
+/// Themes other than the classic look, each in ui/themes/<name>/.
+const THEMES = ["cathedrale"];
+
+function applyTheme(theme) {
+  for (const t of THEMES) document.body.classList.toggle(`theme-${t}`, t === theme);
+}
 
 $("prefs").addEventListener("close", () => {
-  if ($("prefs").returnValue !== "save") return;
+  if ($("prefs").returnValue !== "save") {
+    showPrefs();
+    return;
+  }
   prefs.naming = { folder: $("pref-folder").value.trim(), file: $("pref-file").value.trim() };
   prefs.offset = $("pref-manual-offset").checked ? Number($("pref-offset").value) || 0 : null;
   prefs.c2 = $("pref-c2").checked;
@@ -467,6 +481,7 @@ $("prefs").addEventListener("close", () => {
   prefs.embedCover = $("pref-embed").checked;
   prefs.saveCover = $("pref-save-cover").checked;
   prefs.ejectAfter = $("pref-eject").checked;
+  prefs.theme = $("pref-theme").value;
   savePrefs();
 });
 

@@ -53,6 +53,19 @@ struct Prefs {
     embed_cover: bool,
     save_cover: bool,
     eject_after: bool,
+    theme: Theme,
+}
+
+/// Look of the window; each one but the classic lives in ui/themes/<name>/.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Theme {
+    Cathedrale,
+    // A theme removed since it was saved falls back to the classic look
+    // (serde wants this catch-all on the last variant).
+    #[default]
+    #[serde(other)]
+    Classic,
 }
 
 impl Default for Prefs {
@@ -68,6 +81,7 @@ impl Default for Prefs {
             embed_cover: true,
             save_cover: true,
             eject_after: false,
+            theme: Theme::Classic,
         }
     }
 }

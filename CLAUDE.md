@@ -26,7 +26,7 @@ Cargo workspace, edition 2024:
   - `cue.rs`, `log.rs`, `naming.rs`.
   - `session.rs` — the whole rip of a disc, emitting `Event`s; used by both CLI and GUI.
 - `crates/galette-cli` — binary `galette` (`galette info`, `galette rip`).
-- `crates/galette-gui` — Tauri v2, binary `galette-gui`. Frontend is plain HTML/CSS/JS in `ui/` (no Node.js, `withGlobalTauri`). Settings are stored in the app config dir (`settings.json`). A thread polls the drive (TEST UNIT READY every 1.5 s) to detect disc insertion.
+- `crates/galette-gui` — Tauri v2, binary `galette-gui`. Frontend is plain HTML/CSS/JS in `ui/` (no Node.js, `withGlobalTauri`). Settings are stored in the app config dir (`settings.json`). Optional themes (`Prefs.theme`, chosen in the settings) live in `ui/themes/<name>/` as CSS + SVG over the same layout: they only change colors, fonts, background and logos, never the organization. Only `cathedrale` is kept; rejected themes are archived in the git-ignored `attic/`. A thread polls the drive (TEST UNIT READY every 1.5 s) to detect disc insertion.
 
 ## Commands
 

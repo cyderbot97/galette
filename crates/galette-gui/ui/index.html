@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>Galette</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="themes/cathedrale/theme.css">
 </head>
 <body>
   <header>
@@ -118,9 +119,6 @@
         <legend>Qualité</legend>
         <label class="inline">MP3
           <select id="pref-mp3-quality">
-            <option value="v0">VBR V0 (≈ 245 kbit/s, recommandé)</option>
-            <option value="v2">VBR V2 (≈ 190 kbit/s)</option>
-            <option value="cbr320">CBR 320 kbit/s</option>
           </select>
         </label>
       </fieldset>
@@ -130,6 +128,16 @@
         <label class="inline"><input type="checkbox" id="pref-embed"> Intégrer la pochette dans les fichiers (sauf WAV)</label>
         <label class="inline"><input type="checkbox" id="pref-save-cover"> Enregistrer la pochette (cover.jpg)</label>
         <label class="inline"><input type="checkbox" id="pref-eject"> Éjecter le disque à la fin du rip</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Apparence</legend>
+        <label class="inline">Thème
+          <select id="pref-theme">
+            <option value="classic">Classique</option>
+            <option value="cathedrale">Cathédrale : vitraux, ogives et cierges</option>
+          </select>
+        </label>
       </fieldset>
 
       <div class="dialog-buttons">
