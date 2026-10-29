@@ -267,12 +267,15 @@ impl Reader<'_> {
             }
             let n = SECTORS_PER_READ.min(sectors.end - lba);
             let i = (lba - sectors.start) as usize;
-            if self.read_chunk(lba, n, &mut pass, i).is_err() {
+            match self.read_chunk(lba, n, &mut pass, i) {
+                Ok(()) => {}
+                Err(e) if e.is_drive_failure() => return Err(e),
                 // Find out which sectors are unreadable, one by one.
-                for k in 0..n {
-                    let ok = (0..ATTEMPTS).any(|_| self.read_chunk(lba + k, 1, &mut pass, i + k as usize).is_ok());
-                    if !ok {
-                        pass.flags[i + k as usize] = Flag::Failed;
+                Err(_) => {
+                    for k in 0..n {
+                        if !self.read_sector(lba + k, &mut pass, i + k as usize)? {
+                            pass.flags[i + k as usize] = Flag::Failed;
+                        }
                     }
                 }
             }
@@ -280,6 +283,18 @@ impl Reader<'_> {
             progress((lba - sectors.start) as f32 / count as f32);
         }
         Ok(pass)
+    }
+
+    /// Tries a few times to read one sector; `false` if the disc refuses.
+    fn read_sector(&mut self, lba: u32, pass: &mut Pass, i: usize) -> Result<bool> {
+        for _ in 0..ATTEMPTS {
+            match self.read_chunk(lba, 1, pass, i) {
+                Ok(()) => return Ok(true),
+                Err(e) if e.is_drive_failure() => return Err(e),
+                Err(_) => {}
+            }
+        }
+        Ok(false)
     }
 
     /// Reads `n` sectors from `lba` into `pass`, at sector `i`.
@@ -533,6 +548,24 @@ mod tests {
         let options = Options { mode: Mode::Secure, offset: 0, c2: true, cache_kib: 0, cancel: Some(&cancel) };
         let result = read_track(&mut drive, &toc, 1, options, &mut |_| false, &mut |_| {});
         assert!(matches!(result, Err(Error::Cancelled)));
+    }
+
+    /// A drive that stops answering, like a USB bridge that lost track.
+    struct DeadDrive;
+
+    impl Transport for DeadDrive {
+        fn read(&mut self, _: &[u8], _: &mut [u8], _: Duration) -> Result<usize> {
+            Err(Error::DriveNotResponding("host status 0x07".into()))
+        }
+    }
+
+    #[test]
+    fn stops_when_the_drive_stops_responding() {
+        let toc = Toc::parse_musicbrainz(TOC).unwrap();
+        let mut drive = Drive::new(Box::new(DeadDrive));
+        let options = Options { mode: Mode::Secure, offset: 0, c2: true, cache_kib: 0, cancel: None };
+        let result = read_track(&mut drive, &toc, 1, options, &mut |_| false, &mut |_| {});
+        assert!(matches!(result, Err(Error::DriveNotResponding(_))));
     }
 
     #[test]

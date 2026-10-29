@@ -218,8 +218,9 @@ fn rip(args: &RipArgs) -> Result<()> {
     let mut label = String::new();
     let outcome = session::rip(&mut drive, &disc, &settings, &mut |event| {
         match event {
+            Event::ReadingSubcode => print!("Subcode  reading pregaps, ISRCs and MCN…"),
             Event::Subcode { pregaps, isrcs, mcn } => {
-                println!("Subcode  {pregaps} pregap(s), {isrcs} ISRC(s), MCN {}", mcn.unwrap_or("none"));
+                println!("\rSubcode  {pregaps} pregap(s), {isrcs} ISRC(s), MCN {}\x1b[K", mcn.unwrap_or("none"));
                 println!();
             }
             Event::Warning(message) => println!("\rWarning  {message}\x1b[K"),

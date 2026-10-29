@@ -10,6 +10,9 @@ pub enum Error {
     #[error("{0}")]
     Scsi(ScsiError),
 
+    #[error("the drive stopped responding ({0}); unplug it and plug it back in")]
+    DriveNotResponding(String),
+
     #[error("invalid TOC: {0}")]
     InvalidToc(String),
 
@@ -24,6 +27,14 @@ pub enum Error {
 
     #[error("this feature is not supported on this platform yet")]
     Unsupported,
+}
+
+impl Error {
+    /// The drive or its connection failed, as opposed to a disc that cannot
+    /// be read: retrying would only waste time.
+    pub fn is_drive_failure(&self) -> bool {
+        matches!(self, Error::DriveNotResponding(_) | Error::Io(_))
+    }
 }
 
 /// A SCSI/MMC command rejected by the drive, decoded from its sense data.

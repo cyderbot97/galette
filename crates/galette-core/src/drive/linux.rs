@@ -97,7 +97,15 @@ impl Transport for SgTransport {
             return Err(io::Error::last_os_error().into());
         }
 
-        if hdr.status != 0 || hdr.host_status != 0 || hdr.driver_status & 0x0F != 0 {
+        // Host and driver errors come from the computer side (USB bridge,
+        // timeout): the command did not reach the disc.
+        if hdr.host_status != 0 || hdr.driver_status & 0x0F != 0 {
+            return Err(Error::DriveNotResponding(format!(
+                "command 0x{:02X}: host status 0x{:02X}, driver status 0x{:02X}",
+                cdb[0], hdr.host_status, hdr.driver_status
+            )));
+        }
+        if hdr.status != 0 {
             return Err(sense_error(cdb[0], &sense[..hdr.sb_len_wr as usize]));
         }
         Ok(buf.len() - hdr.resid.max(0) as usize)

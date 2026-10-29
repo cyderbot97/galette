@@ -266,6 +266,9 @@ listen("rip", ({ payload: event }) => {
       setStatus(row(event.number), event.text, event.status);
       row(event.number).title = event.read;
       break;
+    case "status":
+      setMessage(event.message || null, "info");
+      break;
     case "warning":
       setMessage(event.message, "info");
       break;

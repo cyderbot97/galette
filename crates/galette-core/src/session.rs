@@ -97,6 +97,8 @@ pub struct Settings {
 }
 
 pub enum Event<'a> {
+    /// Reading pregaps, ISRCs and MCN, before the first track.
+    ReadingSubcode,
     Subcode { pregaps: usize, isrcs: usize, mcn: Option<&'a str> },
     Warning(String),
     TrackStarted { number: u8, title: &'a str },
@@ -151,7 +153,8 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         }
     }
 
-    let subcode = read_subcode(drive, toc, on_event);
+    on_event(Event::ReadingSubcode);
+    let subcode = read_subcode(drive, toc, on_event)?;
     on_event(Event::Subcode {
         pregaps: subcode.pregaps.iter().filter(|&&g| g > 0).count(),
         isrcs: subcode.isrcs.iter().flatten().count(),
@@ -276,22 +279,37 @@ struct Subcode {
     pregaps: Vec<u32>,
 }
 
-/// Some drives do not support these commands: the rip goes on without them.
-fn read_subcode(drive: &mut Drive, toc: &Toc, on_event: &mut dyn FnMut(Event)) -> Subcode {
-    let mcn = drive.read_mcn().unwrap_or_else(|e| {
-        on_event(Event::Warning(format!("cannot read the MCN: {e}")));
-        None
-    });
-    let isrcs = toc
-        .tracks
-        .iter()
-        .map(|t| if t.is_audio { drive.read_isrc(t.number).ok().flatten() } else { None })
-        .collect();
-    let pregaps = gaps::detect_pregaps(toc, &mut |lba| drive.read_q(lba)).unwrap_or_else(|e| {
-        on_event(Event::Warning(format!("cannot read pregaps: {e}")));
-        vec![0; toc.tracks.len()]
-    });
-    Subcode { mcn, isrcs, pregaps }
+/// Some drives do not support these commands: the rip goes on without them,
+/// unless the drive stopped responding altogether.
+fn read_subcode(drive: &mut Drive, toc: &Toc, on_event: &mut dyn FnMut(Event)) -> Result<Subcode> {
+    let mut optional = |result: Result<Option<String>>, what: &str| match result {
+        Ok(value) => Ok(value),
+        Err(e) if e.is_drive_failure() => Err(e),
+        Err(e) => {
+            on_event(Event::Warning(format!("cannot read {what}: {e}")));
+            Ok(None)
+        }
+    };
+    let mcn = optional(drive.read_mcn(), "the MCN")?;
+    let mut isrcs = Vec::new();
+    for track in &toc.tracks {
+        isrcs.push(match track.is_audio {
+            true => match drive.read_isrc(track.number) {
+                Err(e) if e.is_drive_failure() => return Err(e),
+                result => result.ok().flatten(),
+            },
+            false => None,
+        });
+    }
+    let pregaps = match gaps::detect_pregaps(toc, &mut |lba| drive.read_q(lba)) {
+        Ok(pregaps) => pregaps,
+        Err(e) if e.is_drive_failure() => return Err(e),
+        Err(e) => {
+            on_event(Event::Warning(format!("cannot read pregaps: {e}")));
+            vec![0; toc.tracks.len()]
+        }
+    };
+    Ok(Subcode { mcn, isrcs, pregaps })
 }
 
 fn with_path(e: io::Error, what: &str, path: &Path) -> Error {

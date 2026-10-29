@@ -130,6 +130,7 @@ struct RipRequest {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum RipEvent {
+    Status { message: String },
     Warning { message: String },
     Progress { number: u8, phase: &'static str, fraction: f32, detail: String },
     TrackDone { number: u8, status: &'static str, text: String, read: String },
@@ -186,6 +187,9 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
                 album_dir: outcome.album_dir,
             },
             Err(galette_core::Error::Cancelled) => RipEvent::Cancelled,
+            Err(galette_core::Error::DriveNotResponding(_)) => RipEvent::Failed {
+                message: "le lecteur ne répond plus. Débranchez-le, rebranchez-le, puis cliquez sur Actualiser.".into(),
+            },
             Err(e) => RipEvent::Failed { message: e.to_string() },
         });
     });
@@ -194,6 +198,7 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
 
 fn rip_event(event: Event) -> Option<RipEvent> {
     Some(match event {
+        Event::ReadingSubcode => RipEvent::Status { message: "Analyse du disque (pré-gaps, ISRC)…".into() },
         Event::Warning(message) => RipEvent::Warning { message },
         Event::TrackStarted { number, .. } => {
             RipEvent::Progress { number, phase: "reading", fraction: 0.0, detail: "Lecture".into() }
@@ -224,7 +229,7 @@ fn rip_event(event: Event) -> Option<RipEvent> {
             };
             RipEvent::TrackDone { number: track.number, status, text, read: log::read_summary(&track.read) }
         }
-        Event::Subcode { .. } => return None,
+        Event::Subcode { .. } => RipEvent::Status { message: String::new() },
     })
 }
 
