@@ -22,9 +22,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
-    "category": "Audio",
-    "shortDescription": "Secure audio CD ripper"
-  }
+    "targets": [
+      "deb",
+      "appimage"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/icon.png"
+    ],
+    "category": "Music",
+    "shortDescription": "Secure audio CD ripper",
+    "publisher": "cyderbot97",
+    "copyright": "GPL-3.0-or-later",
+    "license": "GPL-3.0-or-later",
+    "homepage": "https://github.com/cyderbot97/galette",
+    "longDescription": "Galette rips audio CDs securely: it recognizes the disc on MusicBrainz, reads it with C2 pointers and re-reads, verifies every track with AccurateRip and writes tagged FLAC files with cover art, a cue sheet and a log.",
+    "linux": {
+      "deb": {
+        "section": "sound"
+      }
+    }
+  },
+  "version": "0.1.0"
 }

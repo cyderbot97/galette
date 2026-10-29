@@ -11,6 +11,20 @@ vérifie le résultat avec AccurateRip et produit des fichiers FLAC correctement
 > AccurateRip et produit des FLAC tagués avec leur pochette, un fichier `.cue`
 > (pré-gaps, ISRC, MCN) et un log. Mode sécurisé avec relectures et pointeurs C2.
 
+## Installer (Linux)
+
+Construire les paquets (il faut Rust, les dépendances ci-dessous et `cargo install tauri-cli`) :
+
+```sh
+cd crates/galette-gui && cargo tauri build
+```
+
+- Debian / Ubuntu : `sudo apt install ./target/release/bundle/deb/Galette_0.1.0_amd64.deb`
+- Toute distribution : `target/release/bundle/appimage/Galette_0.1.0_amd64.AppImage`, à rendre exécutable puis lancer
+
+Galette apparaît alors dans le menu Multimédia. Pour accéder au lecteur, l'utilisateur doit
+faire partie du groupe `cdrom` (c'est le cas par défaut sous Debian et Ubuntu).
+
 ## Essayer
 
 Il faut [Rust](https://rustup.rs). Pour l'application graphique sous Linux (Debian/Ubuntu) :
@@ -90,6 +104,6 @@ une commande SCSI au lecteur.
 - [x] Fichier `.cue` (pré-gaps, ISRC, MCN), log de rip
 - [x] Application graphique (Tauri) : édition des métadonnées, choix de l'édition, progression
 - [x] Détection automatique de l'insertion d'un disque, réglages (nommage, décalage, C2, pochette, éjection)
-- [ ] Paquets d'installation
+- [x] Paquets d'installation Linux (.deb, AppImage)
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), macOS (IOKit)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation
