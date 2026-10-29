@@ -31,7 +31,7 @@ impl Client {
     pub fn lookup(&self, toc: &Toc) -> Result<Vec<Release>> {
         let disc_id = ids::musicbrainz(toc);
         let url = format!(
-            "{API}/discid/{disc_id}?toc={}&cdstubs=no&inc=artist-credits+labels+recordings&fmt=json",
+            "{API}/discid/{disc_id}?toc={}&cdstubs=no&inc=artist-credits+labels+recordings+release-groups&fmt=json",
             toc_param(toc)
         );
         let Some(bytes) = http::get_bytes(&self.agent, &url)? else {
@@ -72,6 +72,8 @@ struct MbRelease {
     artist_credit: Vec<MbCredit>,
     #[serde(rename = "label-info", default)]
     label_info: Vec<MbLabelInfo>,
+    #[serde(rename = "release-group")]
+    release_group: Option<MbReleaseGroup>,
     #[serde(default)]
     media: Vec<MbMedium>,
 }
@@ -81,6 +83,19 @@ struct MbCredit {
     name: String,
     #[serde(default)]
     joinphrase: String,
+    artist: MbId,
+}
+
+#[derive(Deserialize)]
+struct MbId {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct MbReleaseGroup {
+    id: String,
+    #[serde(rename = "first-release-date")]
+    first_release_date: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -111,7 +126,9 @@ struct MbDisc {
 
 #[derive(Deserialize)]
 struct MbTrack {
+    id: String,
     position: u32,
+    recording: Option<MbId>,
     title: String,
     length: Option<u64>,
     #[serde(rename = "artist-credit", default)]
@@ -120,6 +137,14 @@ struct MbTrack {
 
 fn credit_name(credits: &[MbCredit]) -> String {
     credits.iter().map(|c| format!("{}{}", c.name, c.joinphrase)).collect()
+}
+
+fn credit_ids(credits: &[MbCredit]) -> Vec<String> {
+    credits.iter().map(|c| c.artist.id.clone()).collect()
+}
+
+fn non_empty(s: Option<String>) -> Option<String> {
+    s.filter(|s| !s.is_empty())
 }
 
 impl MbRelease {
@@ -135,18 +160,21 @@ impl MbRelease {
             .or_else(|| self.media.iter().find(|m| m.tracks.len() == track_count))?;
 
         let artist = credit_name(&self.artist_credit);
+        let artist_ids = credit_ids(&self.artist_credit);
         let tracks = medium
             .tracks
             .iter()
-            .map(|t| TrackInfo {
-                number: t.position,
-                title: t.title.clone(),
-                artist: if t.artist_credit.is_empty() {
-                    artist.clone()
-                } else {
-                    credit_name(&t.artist_credit)
-                },
-                length_ms: t.length,
+            .map(|t| {
+                let credits = if t.artist_credit.is_empty() { &self.artist_credit } else { &t.artist_credit };
+                TrackInfo {
+                    id: t.id.clone(),
+                    recording_id: t.recording.as_ref().map(|r| r.id.clone()),
+                    number: t.position,
+                    title: t.title.clone(),
+                    artist: credit_name(credits),
+                    artist_ids: credit_ids(credits),
+                    length_ms: t.length,
+                }
             })
             .collect();
         let label = self.label_info.first();
@@ -156,13 +184,16 @@ impl MbRelease {
             disc_count,
             tracks,
             id: self.id,
+            release_group_id: self.release_group.as_ref().map(|g| g.id.clone()),
+            original_date: non_empty(self.release_group.and_then(|g| g.first_release_date)),
             title: self.title,
             artist,
-            date: self.date.filter(|d| !d.is_empty()),
+            artist_ids,
+            date: non_empty(self.date),
             country: self.country,
             label: label.and_then(|l| l.label.as_ref()).map(|l| l.name.clone()),
             catalog_number: label.and_then(|l| l.catalog_number.clone()),
-            barcode: self.barcode.filter(|b| !b.is_empty()),
+            barcode: non_empty(self.barcode),
         })
     }
 }

@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use galette_core::accuraterip::{self, Verdict};
 use galette_core::drive::{self, Drive};
 use galette_core::ids::{self, AccurateRipId};
-use galette_core::metadata::musicbrainz;
-use galette_core::rip;
+use galette_core::metadata::coverart::{self, CoverArt};
+use galette_core::metadata::{Release, musicbrainz};
+use galette_core::{flac, rip, tags};
 use galette_core::toc::{self, Toc};
 use galette_core::wav;
 
@@ -39,37 +40,54 @@ enum Command {
         offline: bool,
     },
 
-    /// Rip the disc to WAV files and verify them with AccurateRip.
-    Rip {
-        /// CD drive to use.
-        #[arg(short, long, default_value = drive::default_device())]
-        device: String,
+    /// Rip the disc to FLAC (or WAV) files and verify them with AccurateRip.
+    Rip(RipArgs),
+}
 
-        /// Folder in which the album folder is created.
-        #[arg(short, long, default_value = ".")]
-        output: PathBuf,
+#[derive(Args)]
+struct RipArgs {
+    /// CD drive to use.
+    #[arg(short, long, default_value = drive::default_device())]
+    device: String,
 
-        /// Read offset of the drive in samples. Looked up in the AccurateRip
-        /// database when not given.
-        #[arg(long, allow_hyphen_values = true)]
-        offset: Option<i32>,
+    /// Folder in which the album folder is created.
+    #[arg(short, long, default_value = ".")]
+    output: PathBuf,
 
-        /// Which MusicBrainz release to use when several match (see `galette info`).
-        #[arg(long, default_value_t = 1)]
-        release: usize,
+    /// Audio format of the ripped tracks.
+    #[arg(short, long, value_enum, default_value_t = Format::Flac)]
+    format: Format,
 
-        /// Only rip these tracks (e.g. --tracks 1,3).
-        #[arg(long, value_delimiter = ',')]
-        tracks: Vec<u8>,
-    },
+    /// Read offset of the drive in samples. Looked up in the AccurateRip
+    /// database when not given.
+    #[arg(long, allow_hyphen_values = true)]
+    offset: Option<i32>,
+
+    /// Which MusicBrainz release to use when several match (see `galette info`).
+    #[arg(long, default_value_t = 1)]
+    release: usize,
+
+    /// Only rip these tracks (e.g. --tracks 1,3).
+    #[arg(long, value_delimiter = ',')]
+    tracks: Vec<u8>,
+
+    /// Do not download the cover art.
+    #[arg(long)]
+    no_cover: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Format {
+    /// Lossless and compressed, with tags and cover art.
+    Flac,
+    /// Uncompressed, without any metadata.
+    Wav,
 }
 
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Info { device, toc, offline } => info(&device, toc.as_deref(), offline),
-        Command::Rip { device, output, offset, release, tracks } => {
-            rip(&device, &output, offset, release, &tracks)
-        }
+        Command::Rip(args) => rip(&args),
     }
 }
 
@@ -134,13 +152,14 @@ fn info(device: &str, toc: Option<&str>, offline: bool) -> Result<()> {
     Ok(())
 }
 
-fn rip(device: &str, output: &Path, offset: Option<i32>, release: usize, only: &[u8]) -> Result<()> {
+fn rip(args: &RipArgs) -> Result<()> {
+    let device = args.device.as_str();
     let mut drive = Drive::open(Some(device))?;
     let info = drive.info().context("cannot identify the drive")?;
     let toc = read_toc(&mut drive, device)?;
     println!("Drive    {} {} ({})", info.vendor, info.product, info.revision);
 
-    let offset = match offset {
+    let offset = match args.offset {
         Some(offset) => offset,
         None => {
             let offsets = accuraterip::fetch_drive_offsets().context("cannot download drive offsets")?;
@@ -158,8 +177,8 @@ fn rip(device: &str, output: &Path, offset: Option<i32>, release: usize, only: &
             println!("Album    not found on MusicBrainz, tracks will be numbered only");
             None
         }
-        n if release == 0 || release > n => bail!("--release must be between 1 and {n}"),
-        _ => releases.into_iter().nth(release - 1),
+        n if args.release == 0 || args.release > n => bail!("--release must be between 1 and {n}"),
+        _ => releases.into_iter().nth(args.release - 1),
     };
     if let Some(r) = &release {
         println!("Album    {} – {}", r.artist, r.title);
@@ -172,20 +191,27 @@ fn rip(device: &str, output: &Path, offset: Option<i32>, release: usize, only: &
         None => println!("AccurateRip  disc not in the database, rips cannot be verified"),
     }
 
-    let album_dir = output.join(match &release {
+    let album_dir = args.output.join(match &release {
         Some(r) => sanitize(&format!("{} - {}", r.artist, r.title)),
         None => format!("Disc {}", ids::musicbrainz(&toc)),
     });
     fs::create_dir_all(&album_dir).with_context(|| format!("cannot create {}", album_dir.display()))?;
     println!("Output   {}", album_dir.display());
+
+    let cover = match (&release, args.format) {
+        (Some(r), Format::Flac) if !args.no_cover => fetch_cover(r, &album_dir),
+        _ => None,
+    };
     println!();
+
+    let disc_id = ids::musicbrainz(&toc);
 
     let audio_count = toc.audio_tracks().count();
     let mut accurate = 0;
     let mut ripped = 0;
     let started = Instant::now();
     for (position, (index, track)) in toc.tracks.iter().enumerate().filter(|(_, t)| t.is_audio).enumerate() {
-        if !only.is_empty() && !only.contains(&track.number) {
+        if !args.tracks.is_empty() && !args.tracks.contains(&track.number) {
             continue;
         }
         let title = release
@@ -201,10 +227,25 @@ fn rip(device: &str, output: &Path, offset: Option<i32>, release: usize, only: &
         })
         .with_context(|| format!("cannot read track {}", track.number))?;
 
-        let path = album_dir.join(format!("{:02} - {}.wav", track.number, sanitize(&title)));
-        let mut file = BufWriter::new(File::create(&path).with_context(|| format!("cannot create {}", path.display()))?);
-        wav::write(&mut file, &audio)?;
-        file.flush()?;
+        let name = format!("{:02} - {}", track.number, sanitize(&title));
+        match args.format {
+            Format::Flac => {
+                print!("\r{label}  encoding");
+                std::io::stdout().flush().ok();
+                let tags = tags::vorbis_comments(release.as_ref(), track.number as u32, audio_count as u32, &disc_id);
+                let file = flac::encode(&audio, &tags, cover.as_ref())
+                    .with_context(|| format!("cannot encode track {}", track.number))?;
+                let path = album_dir.join(format!("{name}.flac"));
+                fs::write(&path, file).with_context(|| format!("cannot write {}", path.display()))?;
+            }
+            Format::Wav => {
+                let path = album_dir.join(format!("{name}.wav"));
+                let mut file =
+                    BufWriter::new(File::create(&path).with_context(|| format!("cannot create {}", path.display()))?);
+                wav::write(&mut file, &audio)?;
+                file.flush()?;
+            }
+        }
 
         let sums = accuraterip::checksums(&audio, position + 1, audio_count);
         let verdict = accuraterip::verify(pressings.as_deref(), position, sums);
@@ -223,6 +264,29 @@ fn rip(device: &str, output: &Path, offset: Option<i32>, release: usize, only: &
     println!();
     println!("{accurate}/{ripped} track(s) accurately ripped in {:.0} s", started.elapsed().as_secs_f32());
     Ok(())
+}
+
+/// Downloads the front cover and saves it next to the tracks. A missing cover
+/// is not worth failing the rip for.
+fn fetch_cover(release: &Release, album_dir: &Path) -> Option<CoverArt> {
+    match coverart::fetch_front(release) {
+        Ok(Some(cover)) => {
+            let path = album_dir.join(format!("cover.{}", cover.extension()));
+            if let Err(e) = fs::write(&path, &cover.data) {
+                println!("Cover    cannot save {}: {e}", path.display());
+            }
+            println!("Cover    {}×{} {}", cover.width, cover.height, cover.mime_type);
+            Some(cover)
+        }
+        Ok(None) => {
+            println!("Cover    none on the Cover Art Archive");
+            None
+        }
+        Err(e) => {
+            println!("Cover    download failed: {e}");
+            None
+        }
+    }
 }
 
 /// Replaces characters that are not allowed in file names on Windows, macOS or Linux.

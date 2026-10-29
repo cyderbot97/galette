@@ -13,6 +13,9 @@ pub enum Error {
     #[error("invalid TOC: {0}")]
     InvalidToc(String),
 
+    #[error("encoding error: {0}")]
+    Encode(String),
+
     #[error("network error: {0}")]
     Network(String),
 
