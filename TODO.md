@@ -4,11 +4,6 @@ Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
 ## À tester
 
-- [ ] **MP3** : pas encore testé à la main. Vérifier dans un lecteur (app Musique,
-  foobar2000…) les tags, la pochette et la lecture sans blanc entre les pistes.
-  Les tests automatiques passent et un fichier a été vérifié (tags ID3 complets,
-  durée exacte grâce à l'en-tête LAME).
-
 - [ ] **Linux** : vérifier que tout compile toujours sur Debian (AAC n'y existe pas
   et l'option ne doit pas apparaître).
 
