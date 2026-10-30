@@ -4,8 +4,8 @@ Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
 ## Publication
 
-- [ ] Ajouter les paquets Linux (`.deb`, AppImage) à la release 0.2.0, à construire
-  sur Debian, puis retirer des notes la phrase qui renvoie Linux vers la 0.1.0.
+- [ ] Construire le `.dmg` de la 0.3.0 sur le Mac et l'ajouter à la release,
+  puis retirer des notes la phrase qui dit qu'il arrive bientôt.
 
 ## Plus tard
 
