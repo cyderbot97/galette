@@ -86,6 +86,19 @@ pub enum Format {
 }
 
 impl Format {
+    /// Short name, as in the settings and at the start of the log's format line.
+    pub fn id(self) -> &'static str {
+        match self {
+            Format::Flac => "flac",
+            Format::Alac => "alac",
+            Format::Wav => "wav",
+            Format::Aiff => "aiff",
+            Format::Mp3 => "mp3",
+            #[cfg(target_os = "macos")]
+            Format::Aac => "aac",
+        }
+    }
+
     /// The formats this build can write.
     pub const ALL: &[Format] = &[
         Format::Flac,
@@ -188,7 +201,7 @@ pub fn read_mode_text(mode: Mode, c2: bool) -> String {
 pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut dyn FnMut(Event)) -> Result<Outcome> {
     let toc = &disc.toc;
     let release = settings.release.as_ref();
-    let album_dir = settings.output.join(settings.naming.folder(release, toc));
+    let album_dir = album_dir(settings.output.join(settings.naming.folder(release, toc)), settings.format);
     // The log and cue sheet are named after the album folder.
     let base_name = album_dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
     fs::create_dir_all(&album_dir).map_err(|e| with_path(e, "cannot create", &album_dir))?;
@@ -347,7 +360,7 @@ fn format_text(settings: &Settings) -> String {
         Format::Alac => "alac (m4a)".to_string(),
         #[cfg(target_os = "macos")]
         Format::Aac => "aac (m4a, Apple AudioToolbox, 256 kbit/s VBR)".to_string(),
-        format => format.extension().to_string(),
+        format => format.id().to_string(),
     }
 }
 
@@ -398,6 +411,35 @@ fn read_subcode(
     Ok(Subcode { mcn, isrcs, pregaps })
 }
 
+/// The album folder, unless it already holds a rip in another format: then
+/// "<folder> (FORMAT)", so that no file of that rip is replaced (ALAC and AAC
+/// files have the same names, and so do every format's log and cue sheet).
+fn album_dir(dir: PathBuf, format: Format) -> PathBuf {
+    if other_format_in(&dir, format) {
+        let mut name = dir.file_name().unwrap_or_default().to_os_string();
+        name.push(format!(" ({})", format.id().to_uppercase()));
+        dir.with_file_name(name)
+    } else {
+        dir
+    }
+}
+
+/// Whether a log in `dir` tells of a rip in a format other than `format`.
+fn other_format_in(dir: &Path, format: Format) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .filter_map(|e| fs::read_to_string(e.path()).ok())
+        .filter_map(|log| log_format(&log).map(str::to_owned))
+        .any(|id| id != format.id())
+}
+
+/// The format's short name in a log: "Output format        alac (m4a)" gives "alac".
+fn log_format(log: &str) -> Option<&str> {
+    log.lines().find_map(|line| line.strip_prefix("Output format")?.split_whitespace().next())
+}
+
 fn with_path(e: io::Error, what: &str, path: &Path) -> Error {
     Error::Io(io::Error::new(e.kind(), format!("{what} {}: {e}", path.display())))
 }
@@ -419,5 +461,19 @@ mod tests {
     fn sanitizes_file_names() {
         assert_eq!(sanitize("AC/DC: Back in Black?"), "AC_DC_ Back in Black_");
         assert_eq!(sanitize("Etc..."), "Etc");
+    }
+
+    #[test]
+    fn keeps_a_rip_in_another_format() {
+        let output = std::env::temp_dir().join(format!("galette-test-{}", std::process::id()));
+        let dir = output.join("Artist - Album");
+        // A new folder, then one holding a rip in the same format: used as is.
+        assert_eq!(album_dir(dir.clone(), Format::Alac), dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Artist - Album.log"), "Galette\nOutput format        alac (m4a)\n").unwrap();
+        assert_eq!(album_dir(dir.clone(), Format::Alac), dir);
+        // Another format goes next to it.
+        assert_eq!(album_dir(dir.clone(), Format::Mp3), output.join("Artist - Album (MP3)"));
+        fs::remove_dir_all(&output).unwrap();
     }
 }
