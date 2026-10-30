@@ -11,29 +11,29 @@
     <div class="brand"><img src="icon.png" alt=""> Galette</div>
     <div id="drive" class="drive"></div>
     <div class="actions">
-      <button id="refresh" title="Relire le disque">↻ Actualiser</button>
-      <button id="eject" title="Ouvrir le tiroir">⏏ Éjecter</button>
-      <button id="settings" title="Réglages">⚙ Réglages</button>
+      <button id="refresh" data-i18n="header.refresh" data-i18n-title="header.refreshTitle"></button>
+      <button id="eject" data-i18n="header.eject" data-i18n-title="header.ejectTitle"></button>
+      <button id="settings" data-i18n="header.settings" data-i18n-title="header.settingsTitle"></button>
     </div>
   </header>
 
   <main>
     <section id="empty" class="empty">
       <div class="disc-icon"></div>
-      <p id="empty-text">Insérez un CD audio.</p>
+      <p id="empty-text" data-i18n="empty.insert"></p>
     </section>
 
     <section id="album" hidden>
       <div class="album-head">
-        <div class="cover"><img id="cover" alt="" hidden><span id="cover-none">Pas de pochette</span></div>
+        <div class="cover"><img id="cover" alt="" hidden><span id="cover-none" data-i18n="album.noCover"></span></div>
         <div class="fields">
-          <label class="edition">Édition
+          <label class="edition"><span data-i18n="album.edition"></span>
             <select id="release"></select>
           </label>
-          <input id="album-artist" class="big" placeholder="Artiste" spellcheck="false">
-          <input id="album-title" class="big title" placeholder="Titre de l'album" spellcheck="false">
+          <input id="album-artist" class="big" data-i18n-placeholder="album.artist" spellcheck="false">
+          <input id="album-title" class="big title" data-i18n-placeholder="album.title" spellcheck="false">
           <div class="row">
-            <label>Année <input id="album-date" placeholder="AAAA" spellcheck="false"></label>
+            <label><span data-i18n="album.year"></span> <input id="album-date" data-i18n-placeholder="album.yearPlaceholder" spellcheck="false"></label>
           </div>
           <div id="badges" class="badges"></div>
         </div>
@@ -47,10 +47,10 @@
             <tr>
               <th class="check"><input type="checkbox" id="check-all" checked></th>
               <th class="num">#</th>
-              <th>Titre</th>
-              <th>Artiste</th>
-              <th class="length">Durée</th>
-              <th class="status">État</th>
+              <th data-i18n="tracks.title"></th>
+              <th data-i18n="tracks.artist"></th>
+              <th class="length" data-i18n="tracks.length"></th>
+              <th class="status" data-i18n="tracks.status"></th>
             </tr>
           </thead>
           <tbody id="tracks"></tbody>
@@ -60,11 +60,11 @@
   </main>
 
   <footer>
-    <label class="output">Dossier
+    <label class="output"><span data-i18n="footer.folder"></span>
       <span id="output" class="path"></span>
-      <button id="browse">Parcourir…</button>
+      <button id="browse" data-i18n="footer.browse"></button>
     </label>
-    <label>Format
+    <label><span data-i18n="footer.format"></span>
       <select id="format">
         <option value="flac">FLAC</option>
         <option value="alac">ALAC (Apple Lossless)</option>
@@ -74,83 +74,87 @@
         <option value="wav">WAV</option>
       </select>
     </label>
-    <label>Mode
+    <label><span data-i18n="footer.mode"></span>
       <select id="mode">
-        <option value="secure">Sécurisé</option>
-        <option value="burst">Rapide</option>
+        <option value="secure" data-i18n="footer.secure"></option>
+        <option value="burst" data-i18n="footer.burst"></option>
       </select>
     </label>
-    <button id="rip" class="primary" disabled>Ripper</button>
+    <button id="rip" class="primary" disabled data-i18n="rip.start"></button>
   </footer>
 
   <dialog id="prefs">
     <form method="dialog">
-      <h2>Réglages</h2>
+      <h2 data-i18n="settings.title"></h2>
 
       <fieldset>
-        <legend>Nommage</legend>
-        <label>Dossier de l'album
+        <legend data-i18n="settings.naming"></legend>
+        <label><span data-i18n="settings.albumFolder"></span>
           <input id="pref-folder" spellcheck="false">
         </label>
-        <label>Fichier de chaque piste
+        <label><span data-i18n="settings.trackFile"></span>
           <input id="pref-file" spellcheck="false">
         </label>
-        <p class="hint">
-          Champs : <code>{albumartist}</code> <code>{album}</code> <code>{year}</code> <code>{disc}</code>
-          <code>{disccount}</code>, et pour les fichiers <code>{track}</code> <code>{title}</code> <code>{artist}</code>.
-          Un <code>/</code> dans le dossier crée des sous-dossiers.
-        </p>
-        <p class="preview">Exemple : <span id="pref-preview"></span></p>
+        <p class="hint" data-i18n-html="settings.fields"></p>
+        <p class="preview"><span data-i18n="settings.example"></span><span id="pref-preview"></span></p>
       </fieldset>
 
       <fieldset>
-        <legend>Lecture</legend>
+        <legend data-i18n="settings.reading"></legend>
         <label class="inline">
-          <input type="checkbox" id="pref-manual-offset"> Décalage de lecture manuel
+          <input type="checkbox" id="pref-manual-offset"> <span data-i18n="settings.manualOffset"></span>
           <input id="pref-offset" type="number" step="1" value="0">
           <span class="hint" id="pref-offset-auto"></span>
         </label>
         <label class="inline">
-          <input type="checkbox" id="pref-c2"> Utiliser les pointeurs C2
-          <span class="hint">(à décocher si le lecteur les gère mal)</span>
+          <input type="checkbox" id="pref-c2"> <span data-i18n="settings.c2"></span>
+          <span class="hint" data-i18n="settings.c2Hint"></span>
         </label>
       </fieldset>
 
       <fieldset>
-        <legend>Qualité</legend>
+        <legend data-i18n="settings.quality"></legend>
         <label class="inline">MP3
           <select id="pref-mp3-quality">
-            <option value="v0">VBR V0 (≈ 245 kbit/s, recommandé)</option>
-            <option value="v2">VBR V2 (≈ 190 kbit/s)</option>
-            <option value="cbr320">CBR 320 kbit/s</option>
+            <option value="v0" data-i18n="settings.mp3V0"></option>
+            <option value="v2" data-i18n="settings.mp3V2"></option>
+            <option value="cbr320" data-i18n="settings.mp3Cbr320"></option>
           </select>
         </label>
       </fieldset>
 
       <fieldset>
-        <legend>Pochette et disque</legend>
-        <label class="inline"><input type="checkbox" id="pref-embed"> Intégrer la pochette dans les fichiers (sauf WAV)</label>
-        <label class="inline"><input type="checkbox" id="pref-save-cover"> Enregistrer la pochette (cover.jpg)</label>
-        <label class="inline"><input type="checkbox" id="pref-eject"> Éjecter le disque à la fin du rip</label>
+        <legend data-i18n="settings.coverAndDisc"></legend>
+        <label class="inline"><input type="checkbox" id="pref-embed"> <span data-i18n="settings.embedCover"></span></label>
+        <label class="inline"><input type="checkbox" id="pref-save-cover"> <span data-i18n="settings.saveCover"></span></label>
+        <label class="inline"><input type="checkbox" id="pref-eject"> <span data-i18n="settings.eject"></span></label>
       </fieldset>
 
       <fieldset>
-        <legend>Apparence</legend>
-        <label class="inline">Thème
+        <legend data-i18n="settings.appearance"></legend>
+        <label class="inline"><span data-i18n="settings.theme"></span>
           <select id="pref-theme">
-            <option value="classic">Classique</option>
-            <option value="cathedrale">Cathédrale : vitraux, ogives et cierges</option>
+            <option value="classic" data-i18n="settings.themeClassic"></option>
+            <option value="cathedrale" data-i18n="settings.themeCathedrale"></option>
+          </select>
+        </label>
+        <label class="inline"><span data-i18n="settings.language"></span>
+          <select id="pref-language">
+            <option value="auto" data-i18n="settings.languageAuto"></option>
+            <option value="fr">Français</option>
+            <option value="en">English</option>
           </select>
         </label>
       </fieldset>
 
       <div class="dialog-buttons">
-        <button value="cancel" formnovalidate>Annuler</button>
-        <button value="save" class="primary" id="pref-save">Enregistrer</button>
+        <button value="cancel" formnovalidate data-i18n="settings.cancel"></button>
+        <button value="save" class="primary" id="pref-save" data-i18n="settings.save"></button>
       </div>
     </form>
   </dialog>
 
+  <script src="i18n.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

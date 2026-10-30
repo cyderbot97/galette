@@ -1,6 +1,7 @@
 //! A whole rip, from the disc in the drive to the album folder: the steps
 //! shared by every user interface. Progress is reported through [`Event`]s.
 
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -162,11 +163,36 @@ pub struct Settings {
     pub cancel: Option<Arc<AtomicBool>>,
 }
 
+/// Something went wrong without stopping the rip. `Display` gives the
+/// English text (CLI); the GUI shows its own translation.
+#[derive(Debug, Clone)]
+pub enum Warning {
+    /// The cover file could not be written next to the tracks.
+    CoverNotSaved { path: PathBuf, error: String },
+    /// Audio before track 1 (HTOA), `mm:ss:ff` long, which is not ripped.
+    HiddenAudio(String),
+    /// The drive could not read the disc's catalog number.
+    McnUnreadable(String),
+    /// The drive could not read the pregaps: tracks start at their index 1.
+    PregapsUnreadable(String),
+}
+
+impl fmt::Display for Warning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Warning::CoverNotSaved { path, error } => write!(f, "cannot save {}: {error}", path.display()),
+            Warning::HiddenAudio(length) => write!(f, "{length} of hidden audio before track 1 are not ripped"),
+            Warning::McnUnreadable(error) => write!(f, "cannot read the MCN: {error}"),
+            Warning::PregapsUnreadable(error) => write!(f, "cannot read pregaps: {error}"),
+        }
+    }
+}
+
 pub enum Event<'a> {
     /// Reading pregaps, ISRCs and MCN, before the first track.
     ReadingSubcode,
     Subcode { pregaps: usize, isrcs: usize, mcn: Option<&'a str> },
-    Warning(String),
+    Warning(Warning),
     TrackStarted { number: u8, title: &'a str },
     TrackProgress { number: u8, progress: Progress },
     Encoding { number: u8 },
@@ -208,7 +234,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     if let Some(cover) = settings.cover.as_ref().filter(|_| settings.save_cover) {
         let path = album_dir.join(format!("cover.{}", cover.extension()));
         if let Err(e) = fs::write(&path, &cover.data) {
-            on_event(Event::Warning(format!("cannot save {}: {e}", path.display())));
+            on_event(Event::Warning(Warning::CoverNotSaved { path: path.clone(), error: e.to_string() }));
         }
     }
 
@@ -227,7 +253,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     });
     if toc.tracks[0].start > 0 {
         let hidden = crate::toc::format_msf(toc.tracks[0].start);
-        on_event(Event::Warning(format!("{hidden} of hidden audio before track 1 are not ripped")));
+        on_event(Event::Warning(Warning::HiddenAudio(hidden)));
     }
 
     let disc_id = ids::musicbrainz(toc);
@@ -380,15 +406,14 @@ fn read_subcode(
     cancelled: &dyn Fn() -> Result<()>,
     on_event: &mut dyn FnMut(Event),
 ) -> Result<Subcode> {
-    let mut optional = |result: Result<Option<String>>, what: &str| match result {
-        Ok(value) => Ok(value),
-        Err(e) if e.is_drive_failure() => Err(e),
+    let mcn = match drive.read_mcn() {
+        Ok(mcn) => mcn,
+        Err(e) if e.is_drive_failure() => return Err(e),
         Err(e) => {
-            on_event(Event::Warning(format!("cannot read {what}: {e}")));
-            Ok(None)
+            on_event(Event::Warning(Warning::McnUnreadable(e.to_string())));
+            None
         }
     };
-    let mcn = optional(drive.read_mcn(), "the MCN")?;
     let mut isrcs = Vec::new();
     for track in &toc.tracks {
         cancelled()?;
@@ -404,7 +429,7 @@ fn read_subcode(
         Ok(pregaps) => pregaps,
         Err(e) if e.is_drive_failure() || matches!(e, Error::Cancelled) => return Err(e),
         Err(e) => {
-            on_event(Event::Warning(format!("cannot read pregaps: {e}")));
+            on_event(Event::Warning(Warning::PregapsUnreadable(e.to_string())));
             vec![0; toc.tracks.len()]
         }
     };

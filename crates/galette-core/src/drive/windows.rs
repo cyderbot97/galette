@@ -59,10 +59,7 @@ impl PassThroughTransport {
         let letter = match device {
             Some(d) => drive_letter(d)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("not a drive letter: {d}")))?,
-            None => cd_drives()
-                .into_iter()
-                .next()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no CD drive found"))?,
+            None => cd_drives().into_iter().next().ok_or(Error::NoDrive)?,
         };
 
         let path: Vec<u16> = format!(r"\\.\{letter}:").encode_utf16().chain([0]).collect();

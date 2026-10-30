@@ -21,17 +21,16 @@ let lastAlbumDir = null;
 async function scan() {
   if (scanning || ripping) return;
   scanning = true;
-  showEmpty("Lecture du disque…", true);
+  showEmpty("empty.reading", {}, true);
   disc = null;
   updateRipButton();
   try {
     disc = await invoke("scan");
     showDisc();
   } catch (error) {
-    const text = String(error);
-    if (text.includes("no disc")) showEmpty("Insérez un CD audio.");
-    else if (text.includes("cannot open")) showEmpty("Aucun lecteur détecté. Branchez un lecteur CD.");
-    else showEmpty(`Erreur : ${text}`);
+    if (error?.code === "noDisc") showEmpty("empty.insert");
+    else if (error?.code === "noDrive") showEmpty("empty.noDrive");
+    else showEmpty("empty.error", { error: messageRef(error) });
   }
   scanning = false;
 }
@@ -45,49 +44,53 @@ listen("drive", ({ payload: state }) => {
       break;
     case "loading":
       disc = null;
-      showEmpty("Chargement du disque…", true);
+      showEmpty("empty.loading", {}, true);
       break;
     case "empty":
       disc = null;
-      showEmpty("Insérez un CD audio.");
+      showEmpty("empty.insert");
       break;
     case "nodrive":
       disc = null;
+      $("drive").removeAttribute("data-i18n");
       $("drive").textContent = "";
-      showEmpty("Aucun lecteur détecté. Branchez un lecteur CD.");
+      showEmpty("empty.noDrive");
       break;
   }
   updateRipButton();
 });
 
-function showEmpty(text, busy = false) {
+/// The empty state, with the text `key`.
+function showEmpty(key, params = {}, busy = false) {
   $("album").hidden = true;
   $("empty").hidden = false;
   $("empty").classList.toggle("busy", busy);
-  $("empty-text").textContent = text;
+  localize($("empty-text"), key, params);
 }
 
 function showDisc() {
   $("empty").hidden = true;
   $("album").hidden = false;
-  setMessage(disc.warning, "info");
+  if (disc.warning) setMessage("error.detail", { text: { key: "error.lookup" }, detail: disc.warning.detail ?? "" });
+  else setMessage(null);
 
   showDrive();
 
   const select = $("release");
   select.replaceChildren();
   disc.releases.forEach((release, i) => select.add(new Option(describe(release), i)));
-  select.add(new Option("Saisie manuelle", -1));
+  const manual = new Option("", -1);
+  localize(manual, "album.manual");
+  select.add(manual);
   select.value = disc.releases.length ? 0 : -1;
 
   const badges = $("badges");
   badges.replaceChildren(
-    badge(disc.releases.length ? "MusicBrainz ✓" : "Absent de MusicBrainz", disc.releases.length ? "good" : "warn"),
-    badge(
-      disc.accuraterip === null ? "Absent d'AccurateRip" : `AccurateRip : ${disc.accuraterip} jeux de sommes`,
-      disc.accuraterip === null ? "warn" : "good",
-    ),
-    badge(`${disc.tracks.filter((t) => t.isAudio).length} pistes`),
+    disc.releases.length ? badge("badge.musicbrainz", {}, "good") : badge("badge.noMusicbrainz", {}, "warn"),
+    disc.accuraterip === null
+      ? badge("badge.noAccuraterip", {}, "warn")
+      : badge("badge.accuraterip", { sets: disc.accuraterip }, "good"),
+    badge("badge.tracks", { count: disc.tracks.filter((t) => t.isAudio).length }),
   );
 
   buildTracks();
@@ -97,10 +100,10 @@ function showDisc() {
 
 function showDrive() {
   if (!disc) return;
-  let offset = disc.offset === null ? "décalage inconnu" : `décalage ${signed(disc.offset)}`;
-  if (prefs.offset !== null) offset = `décalage ${signed(prefs.offset)} (manuel)`;
+  let offset = disc.offset === null ? { key: "drive.offsetUnknown" } : { key: "drive.offset", params: { offset: signed(disc.offset) } };
+  if (prefs.offset !== null) offset = { key: "drive.offsetManual", params: { offset: signed(prefs.offset) } };
   const c2 = disc.c2 && prefs.c2 ? "✓" : "✗";
-  $("drive").textContent = `${disc.drive} · ${offset} · C2 ${c2}`;
+  localize($("drive"), "drive.line", { drive: disc.drive, offset, c2 });
 }
 
 function describe(release) {
@@ -109,10 +112,10 @@ function describe(release) {
   return `${release.artist} – ${release.title}${cd} · ${parts.join(" · ")}`;
 }
 
-function badge(text, kind = "") {
+function badge(key, params = {}, kind = "") {
   const span = document.createElement("span");
   span.className = `badge ${kind}`;
-  span.textContent = text;
+  localize(span, key, params);
   return span;
 }
 
@@ -138,7 +141,9 @@ function buildTracks() {
     check.addEventListener("change", updateRipButton);
     row.insertCell().append(check);
     row.insertCell().textContent = track.number;
-    row.insertCell().append(textInput("title", track.isAudio ? "" : "Piste de données"));
+    const title = textInput("title");
+    if (!track.isAudio) localize(title, "track.data", {}, "placeholder");
+    row.insertCell().append(title);
     row.insertCell().append(textInput("artist"));
     row.insertCell().textContent = track.length;
 
@@ -148,10 +153,9 @@ function buildTracks() {
   $("check-all").checked = true;
 }
 
-function textInput(field, placeholder = "") {
+function textInput(field) {
   const input = document.createElement("input");
   input.dataset.field = field;
-  input.placeholder = placeholder;
   input.spellcheck = false;
   return input;
 }
@@ -172,7 +176,7 @@ async function selectRelease() {
   for (const row of rows()) {
     const info = release?.tracks.find((t) => t.number === Number(row.dataset.number));
     field(row, "title").value = info?.title ?? "";
-    field(row, "title").placeholder = `Piste ${row.dataset.number}`;
+    localize(field(row, "title"), "track.default", { number: row.dataset.number }, "placeholder");
     field(row, "artist").value = info?.artist ?? release?.artist ?? "";
   }
   await loadCover(release);
@@ -183,10 +187,10 @@ async function loadCover(release) {
   img.hidden = true;
   $("cover-none").hidden = false;
   if (!release) return;
-  $("cover-none").textContent = "Chargement…";
+  localize($("cover-none"), "album.coverLoading");
   const url = await invoke("cover", { release }).catch(() => null);
   if (currentRelease() !== release) return; // another edition was chosen meanwhile
-  $("cover-none").textContent = "Pas de pochette";
+  localize($("cover-none"), "album.noCover");
   if (url) {
     img.src = url;
     img.hidden = false;
@@ -224,7 +228,7 @@ function editedRelease() {
     const trackArtist = field(row, "artist").value.trim() || artist;
     if (track.artist !== trackArtist) track.artist_ids = [];
     track.artist = trackArtist;
-    track.title = field(row, "title").value.trim() || `Piste ${number}`;
+    track.title = field(row, "title").value.trim() || t("track.default", { number });
   }
   return release;
 }
@@ -251,7 +255,7 @@ function checkedTracks() {
 function updateRipButton() {
   if (!ripping) stopping = false;
   const button = $("rip");
-  button.textContent = stopping ? "Arrêt…" : ripping ? "Arrêter" : "Ripper";
+  localize(button, stopping ? "rip.stopping" : ripping ? "rip.stop" : "rip.start");
   button.classList.toggle("stop", ripping);
   button.disabled = stopping || (!ripping && (!disc || checkedTracks().length === 0));
   for (const id of ["refresh", "eject", "browse", "format", "mode", "release", "settings"]) $(id).disabled = ripping;
@@ -259,7 +263,7 @@ function updateRipButton() {
 
 async function startRip() {
   if (disc.offset === null && prefs.offset === null) {
-    setMessage("Ce lecteur n'est pas dans la base d'AccurateRip : indiquez son décalage de lecture.", "bad");
+    setMessage("offset.unknownDrive", {}, "bad");
     openPrefs();
     return;
   }
@@ -270,7 +274,7 @@ async function startRip() {
   };
   for (const r of rows()) {
     const waiting = tracks.includes(Number(r.dataset.number));
-    setStatus(r, waiting ? "En attente" : "", "");
+    setStatus(r, waiting ? "track.waiting" : null, {}, "");
   }
   setMessage(null);
   try {
@@ -278,7 +282,7 @@ async function startRip() {
     ripping = true;
     updateRipButton();
   } catch (error) {
-    setMessage(String(error), "bad");
+    setMessage("rip.failed", { error: messageRef(error) }, "bad");
   }
 }
 
@@ -286,9 +290,15 @@ function row(number) {
   return $("tracks").querySelector(`tr[data-number="${number}"]`);
 }
 
-function setStatus(r, text, kind, fraction = null, phase = "") {
+/// A track's status: the text `key` (none if null), its color `kind`, and a
+/// progress bar if `fraction` is given.
+function setStatus(r, key, params, kind, fraction = null, phase = "") {
   const state = r.querySelector(".state");
-  state.textContent = text;
+  if (key) localize(state, key, params);
+  else {
+    state.removeAttribute("data-i18n");
+    state.textContent = "";
+  }
   state.className = `state ${kind}`;
   const bar = r.querySelector(".bar");
   bar.hidden = fraction === null;
@@ -301,37 +311,43 @@ listen("rip", ({ payload: event }) => {
     case "progress": {
       const r = row(event.number);
       r.scrollIntoView({ block: "nearest" });
-      setStatus(r, event.detail, "", event.fraction, event.phase);
+      setStatus(r, `track.${event.phase}`, event.reread ?? {}, "", event.fraction, event.phase);
       break;
     }
-    case "trackDone":
-      setStatus(row(event.number), event.text, event.status);
-      row(event.number).title = event.read;
+    case "trackDone": {
+      // Colors: green when proven right, red otherwise.
+      const kind = { accurate: "accurate", clean: "clean" }[event.status] ?? "bad";
+      setStatus(row(event.number), `track.${event.status}`, { confidence: event.confidence }, kind);
+      row(event.number).dataset.read = JSON.stringify(event.read);
+      showReadSummary(row(event.number));
       break;
-    case "status":
-      setMessage(event.message || null, "info");
+    }
+    case "analyzing":
+      setMessage("rip.analyzing", {}, "info");
       break;
-    case "warning":
-      setMessage(event.message, "info");
+    case "analyzed":
+      setMessage(null);
       break;
+    case "warning": {
+      const warning = messageRef(event.warning, "warning");
+      setMessage(warning.key, warning.params, "info");
+      break;
+    }
     case "finished": {
       ripping = false;
       lastAlbumDir = event.albumDir;
-      const summary = event.verified
-        ? `${event.accurate}/${event.total} piste(s) vérifiée(s) par AccurateRip.`
-        : `${event.clean}/${event.total} piste(s) sans erreur de lecture (disque absent d'AccurateRip).`;
       const perfect = event.verified ? event.accurate === event.total : event.clean === event.total;
-      setMessage(`Terminé. ${summary}`, perfect ? "good" : "bad", true);
+      setMessage(event.verified ? "rip.doneVerified" : "rip.doneUnverified", event, perfect ? "good" : "bad", true);
       break;
     }
     case "cancelled":
       ripping = false;
-      setMessage("Rip arrêté.", "info");
+      setMessage("rip.cancelled", {}, "info");
       clearPending();
       break;
     case "failed":
       ripping = false;
-      setMessage(`Échec du rip : ${event.message}`, "bad");
+      setMessage("rip.failed", { error: messageRef(event.error) }, "bad");
       clearPending();
       break;
   }
@@ -342,23 +358,46 @@ function clearPending() {
   for (const r of rows()) {
     const state = r.querySelector(".state");
     if (!state.classList.contains("accurate") && !state.classList.contains("clean") && !state.classList.contains("bad")) {
-      setStatus(r, "", "");
+      setStatus(r, null, {}, "");
     }
   }
 }
 
-function setMessage(text, kind = "info", withFolder = false) {
+languageListeners.push(() => rows().forEach(showReadSummary));
+
+/// How a track was read, as the row's tooltip (in the current language).
+function showReadSummary(r) {
+  const read = JSON.parse(r.dataset.read || "null");
+  if (!read) return;
+  const parts = [t("read.passes", { passes: read.passes })];
+  const counts = [
+    ["read.c2", read.c2Sectors],
+    ["read.mismatches", read.mismatches],
+    ["read.rereads", read.rereads],
+    ["read.suspicious", read.suspicious],
+    ["read.unreadable", read.unreadable],
+    ["read.cleared", read.cleared],
+  ];
+  for (const [key, count] of counts) if (count > 0) parts.push(t(key, { count }));
+  r.title = parts.join(", ");
+}
+
+/// The message box: the text `key` (hidden if null), colored by `kind`, with
+/// an "open folder" button after a rip.
+function setMessage(key, params = {}, kind = "info", withFolder = false) {
   const box = $("message");
-  box.hidden = !text;
-  if (!text) return;
+  box.hidden = !key;
+  if (!key) return;
   box.className = `message ${kind}`;
-  box.replaceChildren(document.createTextNode(text));
+  const text = document.createElement("span");
+  localize(text, key, params);
+  box.replaceChildren(text);
   if (withFolder) {
     const button = document.createElement("button");
-    button.textContent = "Ouvrir le dossier";
+    localize(button, "rip.openFolder");
     button.addEventListener("click", () =>
       invoke("open_folder", { path: lastAlbumDir }).catch((e) =>
-        setMessage(`Impossible d'ouvrir le dossier : ${e}`, "bad"),
+        setMessage("rip.openFolderFailed", { error: messageRef(e) }, "bad"),
       ),
     );
     box.append(button);
@@ -384,12 +423,12 @@ $("check-all").addEventListener("change", (e) => {
 $("eject").addEventListener("click", async () => {
   disc = null;
   updateRipButton();
-  showEmpty("Éjection…", true);
+  showEmpty("empty.ejecting", {}, true);
   try {
     await invoke("eject");
-    showEmpty("Insérez un CD audio.");
+    showEmpty("empty.insert");
   } catch (error) {
-    showEmpty(`Erreur : ${error}`);
+    showEmpty("empty.error", { error: messageRef(error) });
   }
 });
 
@@ -416,7 +455,7 @@ async function savePrefs() {
   try {
     await invoke("save_prefs", { prefs });
   } catch (error) {
-    setMessage(`Réglages non enregistrés : ${error}`, "bad");
+    setMessage("settings.notSaved", { error: messageRef(error) }, "bad");
   }
 }
 
@@ -427,6 +466,7 @@ function showPrefs() {
   $("format").value = prefs.format;
   $("mode").value = prefs.secure ? "secure" : "burst";
   applyTheme(prefs.theme);
+  setLanguage(prefs.language);
   showDrive();
 }
 
@@ -436,14 +476,15 @@ function openPrefs() {
   $("pref-manual-offset").checked = prefs.offset !== null;
   $("pref-offset").value = prefs.offset ?? disc?.offset ?? 0;
   $("pref-offset").disabled = prefs.offset === null;
-  $("pref-offset-auto").textContent =
-    disc?.offset != null ? `(AccurateRip : ${signed(disc.offset)})` : "(lecteur inconnu d'AccurateRip)";
+  if (disc?.offset != null) localize($("pref-offset-auto"), "settings.offsetAuto", { offset: signed(disc.offset) });
+  else localize($("pref-offset-auto"), "settings.offsetNone");
   $("pref-c2").checked = prefs.c2;
   $("pref-mp3-quality").value = prefs.mp3Quality;
   $("pref-embed").checked = prefs.embedCover;
   $("pref-save-cover").checked = prefs.saveCover;
   $("pref-eject").checked = prefs.ejectAfter;
   $("pref-theme").value = prefs.theme;
+  $("pref-language").value = prefs.language;
   updatePreview();
   $("prefs").showModal();
 }
@@ -452,7 +493,10 @@ async function updatePreview() {
   const naming = { folder: $("pref-folder").value, file: $("pref-file").value };
   const release = disc ? editedRelease() : null;
   const path = await invoke("preview_naming", { naming, release }).catch(() => "");
-  $("pref-preview").textContent = path ? `${prefs.output}/${path}` : "(insérez un disque pour voir un exemple)";
+  if (path) {
+    $("pref-preview").removeAttribute("data-i18n");
+    $("pref-preview").textContent = `${prefs.output}/${path}`;
+  } else localize($("pref-preview"), "settings.exampleNone");
 }
 
 $("settings").addEventListener("click", openPrefs);
@@ -461,6 +505,7 @@ $("pref-file").addEventListener("input", updatePreview);
 $("pref-manual-offset").addEventListener("change", (e) => ($("pref-offset").disabled = !e.target.checked));
 // The theme shows at once; cancelling the dialog puts the previous one back.
 $("pref-theme").addEventListener("change", (e) => applyTheme(e.target.value));
+$("pref-language").addEventListener("change", (e) => setLanguage(e.target.value));
 
 /// Themes other than the classic look, each in ui/themes/<name>/.
 const THEMES = ["cathedrale"];
@@ -482,6 +527,7 @@ $("prefs").addEventListener("close", () => {
   prefs.saveCover = $("pref-save-cover").checked;
   prefs.ejectAfter = $("pref-eject").checked;
   prefs.theme = $("pref-theme").value;
+  prefs.language = $("pref-language").value;
   savePrefs();
 });
 
@@ -492,6 +538,7 @@ function signed(n) {
 // ---------- Start ----------
 
 (async () => {
+  setLanguage("auto"); // until the settings are loaded
   const formats = await invoke("formats");
   for (const option of [...$("format").options]) if (!formats.includes(option.value)) option.remove();
   prefs = await invoke("get_prefs");

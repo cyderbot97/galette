@@ -252,11 +252,10 @@ impl IoKitTransport {
             }
         }
         let Some(service) = found else {
-            let what = match device {
-                Some(d) => format!("no CD drive holds {d}"),
-                None => "no CD drive found".to_owned(),
-            };
-            return Err(io::Error::new(io::ErrorKind::NotFound, what).into());
+            return Err(match device {
+                Some(d) => io::Error::new(io::ErrorKind::NotFound, format!("no CD drive holds {d}")).into(),
+                None => Error::NoDrive,
+            });
         };
 
         let mut plugin: Handle<PlugInInterface> = ptr::null_mut();

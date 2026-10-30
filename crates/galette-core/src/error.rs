@@ -10,6 +10,10 @@ pub enum Error {
     #[error("{0}")]
     Scsi(ScsiError),
 
+    /// No CD drive is connected (when looking for the default one).
+    #[error("no CD drive found")]
+    NoDrive,
+
     #[error("the drive stopped responding ({0}); unplug it and plug it back in")]
     DriveNotResponding(String),
 

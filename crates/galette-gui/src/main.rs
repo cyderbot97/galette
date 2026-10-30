@@ -24,7 +24,7 @@ use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
-use galette_core::{ids, log, mp3, toc};
+use galette_core::{ids, mp3, toc};
 
 /// Least time between two reading progress events sent to the window.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -57,6 +57,18 @@ struct Prefs {
     save_cover: bool,
     eject_after: bool,
     theme: Theme,
+    language: Language,
+}
+
+/// Language of the window; `Auto` follows the system's.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Language {
+    Fr,
+    En,
+    #[default]
+    #[serde(other)]
+    Auto,
 }
 
 /// Look of the window; each one but the classic lives in ui/themes/<name>/.
@@ -85,6 +97,7 @@ impl Default for Prefs {
             save_cover: true,
             eject_after: false,
             theme: Theme::Classic,
+            language: Language::Auto,
         }
     }
 }
@@ -104,8 +117,10 @@ fn formats() -> &'static [Format] {
 #[tauri::command]
 fn save_prefs(state: State<'_, AppState>, prefs: Prefs) -> CommandResult<()> {
     if let Some(path) = state.prefs_path.lock().unwrap().as_ref() {
-        let json = serde_json::to_string_pretty(&prefs).map_err(|e| e.to_string())?;
-        fs::create_dir_all(path.parent().unwrap()).and_then(|_| fs::write(path, json)).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(&prefs).map_err(|e| Message::with("saveSettings", e))?;
+        fs::create_dir_all(path.parent().unwrap())
+            .and_then(|_| fs::write(path, json))
+            .map_err(|e| Message::with("saveSettings", e))?;
     }
     *state.prefs.lock().unwrap() = prefs;
     Ok(())
@@ -127,8 +142,58 @@ fn preview_naming(state: State<'_, AppState>, naming: Naming, release: Option<Re
 
 type AppState = Arc<Shared>;
 
-/// Errors are shown to the user as they are.
-type CommandResult<T> = Result<T, String>;
+type CommandResult<T> = Result<T, Message>;
+
+/// An error or a warning for the window. The window shows its own text for
+/// `code`, in the user's language; `detail` is the engine's technical
+/// explanation (in English), added to it when there is one.
+#[derive(Clone, Debug, Serialize)]
+struct Message {
+    code: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+impl Message {
+    fn new(code: &'static str) -> Self {
+        Self { code, detail: None }
+    }
+
+    fn with(code: &'static str, detail: impl ToString) -> Self {
+        Self { code, detail: Some(detail.to_string()) }
+    }
+}
+
+/// Lets `?` turn an engine error into a message.
+impl From<galette_core::Error> for Message {
+    fn from(e: galette_core::Error) -> Self {
+        use galette_core::Error;
+        match e {
+            Error::NoDrive => Message::new("noDrive"),
+            Error::Scsi(s) if s.is_no_medium() => Message::new("noDisc"),
+            Error::Scsi(s) => Message::with("scsi", s),
+            Error::DriveNotResponding(d) => Message::with("driveNotResponding", d),
+            Error::Io(e) => Message::with("io", e),
+            Error::InvalidToc(d) => Message::with("invalidToc", d),
+            Error::Encode(d) => Message::with("encode", d),
+            Error::Network(d) => Message::with("network", d),
+            Error::Cancelled => Message::new("cancelled"),
+            Error::Unsupported => Message::new("unsupported"),
+        }
+    }
+}
+
+impl From<&session::Warning> for Message {
+    fn from(warning: &session::Warning) -> Self {
+        use session::Warning;
+        match warning {
+            Warning::CoverNotSaved { path, error } => Message::with("coverNotSaved", format!("{}: {error}", path.display())),
+            Warning::HiddenAudio(length) => Message::with("hiddenAudio", length),
+            Warning::McnUnreadable(e) => Message::with("mcnUnreadable", e),
+            Warning::PregapsUnreadable(e) => Message::with("pregapsUnreadable", e),
+        }
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,7 +206,8 @@ struct DiscView {
     accuraterip: Option<usize>,
     tracks: Vec<TrackView>,
     releases: Vec<Release>,
-    warning: Option<String>,
+    /// The online lookup failed.
+    warning: Option<Message>,
 }
 
 #[derive(Serialize)]
@@ -166,9 +232,9 @@ async fn scan(state: State<'_, AppState>) -> CommandResult<DiscView> {
 }
 
 fn read_disc(state: &Shared) -> CommandResult<DiscView> {
-    let mut drive = Drive::open(None).map_err(|e| e.to_string())?;
-    let mut disc = Disc::read(&mut drive).map_err(|e| e.to_string())?;
-    let warning = disc.lookup().err().map(|e| format!("Recherche en ligne impossible : {e}"));
+    let mut drive = Drive::open(None)?;
+    let mut disc = Disc::read(&mut drive)?;
+    let warning = disc.lookup().err().map(|e| Message::with("lookup", e));
     let view = DiscView {
         drive: format!("{} {}", disc.drive.vendor, disc.drive.product),
         c2: disc.c2(),
@@ -227,25 +293,55 @@ struct RipRequest {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum RipEvent {
-    Status { message: String },
-    Warning { message: String },
-    Progress { number: u8, phase: &'static str, fraction: f32, detail: String },
-    TrackDone { number: u8, status: &'static str, text: String, read: String },
+    /// Reading pregaps, ISRCs and MCN before the first track.
+    Analyzing,
+    Analyzed,
+    Warning { warning: Message },
+    /// `phase`: "reading", "verifying", "rereading" (round `attempt` of
+    /// `max_attempts`, on `sectors` sectors) or "encoding".
+    Progress {
+        number: u8,
+        phase: &'static str,
+        fraction: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reread: Option<Reread>,
+    },
+    /// `status`: "accurate" (with `confidence`), "mismatch", "clean" or "errors".
+    TrackDone { number: u8, status: &'static str, confidence: Option<u32>, read: ReadView },
     Finished { album_dir: PathBuf, accurate: usize, clean: usize, total: usize, verified: bool },
-    Failed { message: String },
+    Failed { error: Message },
     Cancelled,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Reread {
+    attempt: u32,
+    max_attempts: u32,
+    sectors: usize,
+}
+
+/// How a track was read, in numbers the window puts into words.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadView {
+    passes: u32,
+    c2_sectors: u32,
+    mismatches: u32,
+    rereads: u32,
+    suspicious: usize,
+    unreadable: usize,
+    cleared: usize,
 }
 
 /// Starts ripping in the background; progress comes as `rip` events.
 #[tauri::command]
 fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) -> CommandResult<()> {
-    let disc = state.disc.lock().unwrap().clone().ok_or("Aucun disque analysé")?;
+    let disc = state.disc.lock().unwrap().clone().ok_or(Message::new("noScan"))?;
     let prefs = state.prefs.lock().unwrap().clone();
-    let offset = prefs.offset.or(disc.offset).ok_or(
-        "Ce lecteur n'est pas dans la base d'AccurateRip : indiquez son décalage dans les réglages.",
-    )?;
+    let offset = prefs.offset.or(disc.offset).ok_or(Message::new("unknownOffset"))?;
     if state.ripping.swap(true, Ordering::SeqCst) {
-        return Err("Un rip est déjà en cours".into());
+        return Err(Message::new("alreadyRipping"));
     }
     state.cancel.store(false, Ordering::SeqCst);
     let cover = request.release.as_ref().and_then(|r| state.covers.lock().unwrap().get(&r.id).cloned().flatten());
@@ -300,49 +396,49 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
                 album_dir: outcome.album_dir,
             },
             Err(galette_core::Error::Cancelled) => RipEvent::Cancelled,
-            Err(galette_core::Error::DriveNotResponding(_)) => RipEvent::Failed {
-                message: "le lecteur ne répond plus. Débranchez-le, rebranchez-le, puis cliquez sur Actualiser.".into(),
-            },
-            Err(e) => RipEvent::Failed { message: e.to_string() },
+            Err(e) => RipEvent::Failed { error: e.into() },
         });
     });
     Ok(())
 }
 
 fn rip_event(event: Event) -> Option<RipEvent> {
+    let progress = |number, phase, fraction| RipEvent::Progress { number, phase, fraction, reread: None };
     Some(match event {
-        Event::ReadingSubcode => RipEvent::Status { message: "Analyse du disque (pré-gaps, ISRC)…".into() },
-        Event::Warning(message) => RipEvent::Warning { message },
-        Event::TrackStarted { number, .. } => {
-            RipEvent::Progress { number, phase: "reading", fraction: 0.0, detail: "Lecture".into() }
-        }
-        Event::TrackProgress { number, progress } => match progress {
-            Progress::Reading(fraction) => {
-                RipEvent::Progress { number, phase: "reading", fraction, detail: "Lecture".into() }
-            }
-            Progress::Verifying(fraction) => {
-                RipEvent::Progress { number, phase: "verifying", fraction, detail: "Seconde lecture".into() }
-            }
+        Event::ReadingSubcode => RipEvent::Analyzing,
+        Event::Subcode { .. } => RipEvent::Analyzed,
+        Event::Warning(warning) => RipEvent::Warning { warning: (&warning).into() },
+        Event::TrackStarted { number, .. } => progress(number, "reading", 0.0),
+        Event::TrackProgress { number, progress: p } => match p {
+            Progress::Reading(fraction) => progress(number, "reading", fraction),
+            Progress::Verifying(fraction) => progress(number, "verifying", fraction),
             Progress::Rereading { attempt, sectors } => RipEvent::Progress {
                 number,
                 phase: "rereading",
                 fraction: attempt as f32 / rip::MAX_REREADS as f32,
-                detail: format!("Relecture de {sectors} secteur(s), {attempt}/{}", rip::MAX_REREADS),
+                reread: Some(Reread { attempt, max_attempts: rip::MAX_REREADS, sectors }),
             },
         },
-        Event::Encoding { number } => {
-            RipEvent::Progress { number, phase: "encoding", fraction: 1.0, detail: "Encodage".into() }
-        }
+        Event::Encoding { number } => progress(number, "encoding", 1.0),
         Event::TrackDone(track) => {
-            let (status, text) = match (track.verdict, track.read.is_clean()) {
-                (Verdict::Accurate { confidence, .. }, _) => ("accurate", format!("AccurateRip ✓ ({confidence})")),
-                (Verdict::Mismatch, _) => ("bad", "Non conforme à AccurateRip".to_string()),
-                (Verdict::Unknown, true) => ("clean", "Lectures identiques ✓".to_string()),
-                (Verdict::Unknown, false) => ("bad", "Erreurs de lecture".to_string()),
+            let (status, confidence) = match (track.verdict, track.read.is_clean()) {
+                (Verdict::Accurate { confidence, .. }, _) => ("accurate", Some(confidence)),
+                (Verdict::Mismatch, _) => ("mismatch", None),
+                (Verdict::Unknown, true) => ("clean", None),
+                (Verdict::Unknown, false) => ("errors", None),
             };
-            RipEvent::TrackDone { number: track.number, status, text, read: log::read_summary(&track.read) }
+            let read = &track.read;
+            let read = ReadView {
+                passes: read.passes,
+                c2_sectors: read.c2_sectors,
+                mismatches: read.mismatches,
+                rereads: read.rereads,
+                suspicious: read.suspicious.len(),
+                unreadable: read.unreadable.len(),
+                cleared: read.cleared_by_accuraterip,
+            };
+            RipEvent::TrackDone { number: track.number, status, confidence, read }
         }
-        Event::Subcode { .. } => RipEvent::Status { message: String::new() },
     })
 }
 
@@ -354,15 +450,15 @@ fn cancel_rip(state: State<'_, AppState>) {
 #[tauri::command]
 async fn eject(state: State<'_, AppState>) -> CommandResult<()> {
     if state.ripping.load(Ordering::SeqCst) {
-        return Err("Impossible d'éjecter pendant un rip".into());
+        return Err(Message::new("ejectWhileRipping"));
     }
     *state.disc.lock().unwrap() = None;
-    blocking(|| Drive::open(None).and_then(|mut d| d.eject()).map_err(|e| e.to_string())).await
+    blocking(|| Ok(Drive::open(None).and_then(|mut d| d.eject())?)).await
 }
 
 #[tauri::command]
 fn open_folder(app: AppHandle, path: String) -> CommandResult<()> {
-    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+    app.opener().open_path(path, None::<&str>).map_err(|e| Message::with("openFolder", e))
 }
 
 /// Polls the drive and sends a `drive` event ("ready", "loading", "empty" or
@@ -409,7 +505,7 @@ fn load_prefs(app: &AppHandle, state: &Shared) {
 
 /// Runs blocking work (drive, network) off the window's threads.
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> CommandResult<T> + Send + 'static) -> CommandResult<T> {
-    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| Message::with("internal", e))?
 }
 
 /// `m:ss`

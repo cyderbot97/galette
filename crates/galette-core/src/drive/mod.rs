@@ -59,7 +59,11 @@ impl Drive {
     pub fn open(device: Option<&str>) -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
-            let transport = linux::SgTransport::open(device.unwrap_or(default_device()))?;
+            let transport = linux::SgTransport::open(device.unwrap_or(default_device())).map_err(|e| match e {
+                // The default device file only exists while a drive is connected.
+                Error::Io(io) if device.is_none() && io.kind() == std::io::ErrorKind::NotFound => Error::NoDrive,
+                e => e,
+            })?;
             Ok(Self::new(Box::new(transport)))
         }
         #[cfg(target_os = "macos")]
