@@ -2,10 +2,12 @@
 
 Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
-## Publication
+## Langue
 
-- [ ] Construire le `.dmg` de la 0.3.0 sur le Mac et l'ajouter à la release,
-  puis retirer des notes la phrase qui dit qu'il arrive bientôt.
+- [ ] Sans lecteur CD branché, le message affiché vient du moteur, qui parle
+  anglais. Vérifier que tout le logiciel est 100 % en français : les erreurs du
+  moteur (`galette-core`) arrivent telles quelles dans la fenêtre.
+- [ ] Ajouter une version anglaise de l'interface, à choisir dans les réglages.
 
 ## Plus tard
 
