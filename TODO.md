@@ -17,10 +17,6 @@ Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 - [ ] Ajouter les paquets Linux (`.deb`, AppImage) à la release 0.2.0, à construire
   sur Debian, puis retirer des notes la phrase qui renvoie Linux vers la 0.1.0.
 
-## Nouveaux formats (dans cet ordre)
-
-- [ ] WavPack
-
 ## Plus tard
 
 - [ ] CTDB : vérification puis réparation des rips (protocole déjà étudié,

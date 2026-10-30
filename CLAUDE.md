@@ -67,5 +67,5 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
 - Windows transport: later, once the app has matured.
-- More output formats (Opus: user decided against it): WavPack. AAC is done (macOS only, option hidden on other OSes: user's requirement).
+- Output formats are complete for now. Opus and WavPack: user decided against them (WavPack's reference library was too much hassle to bundle). AAC is macOS only, option hidden on other OSes (user's requirement).
 - CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.

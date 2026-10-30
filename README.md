@@ -142,6 +142,5 @@ une commande SCSI au lecteur.
 - [x] MP3 (LAME) et AIFF, tags ID3
 - [x] ALAC (Apple Lossless), tags iTunes
 - [x] AAC (macOS, encodeur d'Apple, 256 kbit/s VBR)
-- [ ] WavPack, AAC (macOS uniquement)
 - [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`)
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation
