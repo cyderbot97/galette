@@ -72,7 +72,7 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 ## Roadmap
 
-`TODO.md` (French, for the user) lists postponed work and things the user has not tested yet: keep it up to date.
+`TODO.md` (French, for the user) lists postponed work and, under « À tester, par système », what the user has not tried by hand yet on each OS (Linux, macOS, Windows). **Every new feature or fix goes there for each OS where it has not been tested**, and is struck once the user has checked it: when the user switches OS, that list says what to test.
 
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
 - Windows: works, see "Windows" above; some GUI features still to check (TODO.md).
