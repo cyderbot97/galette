@@ -11,6 +11,8 @@ pub mod mmc;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(windows)]
+mod windows;
 
 use std::time::Duration;
 
@@ -65,7 +67,12 @@ impl Drive {
             let transport = macos::IoKitTransport::open(device.filter(|d| !d.is_empty()))?;
             Ok(Self::new(Box::new(transport)))
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(windows)]
+        {
+            let transport = windows::PassThroughTransport::open(device.filter(|d| !d.is_empty()))?;
+            Ok(Self::new(Box::new(transport)))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _ = device;
             Err(Error::Unsupported)
@@ -162,7 +169,7 @@ pub fn default_device() -> &'static str {
 }
 
 /// Decodes fixed (0x70/0x71) or descriptor (0x72/0x73) format sense data.
-#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
 fn sense_error(opcode: u8, sense: &[u8]) -> Error {
     let byte = |i: usize| sense.get(i).copied().unwrap_or(0);
     let (sense_key, asc, ascq) = match byte(0) & 0x7F {

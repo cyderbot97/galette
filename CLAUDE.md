@@ -9,14 +9,14 @@ Secure audio CD ripper, free software (GPL-3.0-or-later): EAC-quality ripping wi
 - **Always ask before pushing, tagging or publishing anything** (git push, GitHub releases, issues).
 - Git identity is anonymous: `cyderbot97 <49147296+cyderbot97@users.noreply.github.com>`. Never send the user's personal email to any service (User-Agent, headers, etc.).
 - Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Versioning: SemVer. 0.1.0 is published (Linux, pre-release); 0.2.0 adds macOS. Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
+- Versioning: SemVer. 0.1.0 is published (Linux, pre-release); 0.2.0 adds macOS; 0.4.0 adds Windows (Windows-only release: Linux and macOS packages stay at 0.3.0, the code is otherwise identical). Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
 
 ## Layout
 
 Cargo workspace, edition 2024:
 
 - `crates/galette-core` — the engine (no UI).
-  - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport; `macos.rs` is the IOKit SCSITask transport (hand-written FFI, no extra crate). **The Windows transport (IOCTL_SCSI_PASS_THROUGH_DIRECT) is not written yet**: there `Drive::open` returns `Error::Unsupported` (see "Windows port" below).
+  - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport; `macos.rs` is the IOKit SCSITask transport (hand-written FFI, no extra crate); `windows.rs` is the IOCTL_SCSI_PASS_THROUGH_DIRECT transport (`windows-sys`).
   - `toc.rs`, `ids.rs` — TOC, MusicBrainz / FreeDB / AccurateRip disc IDs.
   - `metadata/` — MusicBrainz lookup, Cover Art Archive. `http.rs` retries 503/429 answers (Retry-After, else 1-2-4-8 s).
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
@@ -35,7 +35,7 @@ cargo test
 cargo clippy --all-targets
 cargo run --release -p galette-gui
 cargo run --release -p galette-cli -- info
-cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux, .app + .dmg on macOS
+cargo tauri build            # from crates/galette-gui: .deb + AppImage on Linux, .app + .dmg on macOS, NSIS .exe on Windows
 ```
 
 On macOS, build outside `~/Documents` (see below): `export CARGO_TARGET_DIR=~/.cache/galette-target`.
@@ -57,30 +57,24 @@ On macOS, build outside `~/Documents` (see below): `export CARGO_TARGET_DIR=~/.c
 - macOS bundle settings live in `tauri.macos.conf.json` (merged over `tauri.conf.json`): targets app + dmg, `icon.icns`, and `signingIdentity: "-"` so the whole bundle is ad-hoc signed (otherwise only the binary is, and a downloaded app is reported as damaged).
 - Tauri bundle category must be a valid Tauri value (`Music`); icon file names must be plain sizes (`256x256.png`, not `@2x`).
 
-## Windows port (in progress)
+## Windows
 
-Started from the Mac, which cannot build or test it: everything below is to be done and verified on Windows.
-
-- **Build setup**: Rust with the MSVC toolchain (rustup default), Visual Studio Build Tools with "Desktop development with C++" (the C compiler builds LAME via mp3lame-sys, and ring), `cargo install tauri-cli`. WebView2 ships with Windows 10/11. `CARGO_TARGET_DIR` is a macOS-only workaround, not needed here. First check that `cargo build` / `cargo test` pass before writing anything: mp3lame-sys on MSVC has never been tried.
-- **Already ready**: `tauri.windows.conf.json` (NSIS installer, `icons/icon.ico`); file names are sanitized for Windows (`session::sanitize`); AAC is macOS-only (`#[cfg]`), so the format menu will not offer it; the output folder defaults to the user's Music folder (Tauri `audio_dir`).
-- **To write: `drive/windows.rs`**, a `Transport` like `linux.rs` / `macos.rs`, wired in `Drive::open` (replace the `Error::Unsupported` branch; `Drive::open(None)` must find the first CD drive):
-  - Find drives with `GetLogicalDrives` + `GetDriveTypeW == DRIVE_CDROM`; open `\\.\D:` with `CreateFileW(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING)` (read-write is required for pass-through; fall back to read-only like Linux).
-  - Send CDBs with `DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT)`: a `SCSI_PASS_THROUGH_DIRECT` followed by a sense buffer in one struct; data in, `TimeOutValue` in seconds. Use the `windows-sys` crate (features for `Win32_Storage_IscsiDisc`, `Win32_Storage_FileSystem`, `Win32_System_IO`, `Win32_Foundation`) rather than hand-declaring everything.
-  - The data buffer must honor the adapter's `AlignmentMask` (`IOCTL_STORAGE_QUERY_PROPERTY`, `StorageAdapterProperty`): copy through an aligned buffer if needed. Reads are at most 24 sectors × (2352 + 296) = 63,552 bytes (`rip::SECTORS_PER_READ`), under the usual 64 KiB limit of USB bridges.
-  - Map errors like `linux.rs`: `ScsiStatus` CHECK CONDITION → sense data (`sense_error` in `drive/mod.rs`); a failing `DeviceIoControl` (device gone, I/O error) → `Error::DriveNotResponding`.
-  - Unlike macOS, Windows lets pass-through run while the disc is mounted (EAC works that way): no unmount should be needed. Admin rights should not be needed either; check both.
-  - The GUI polls the drive every 1.5 s (TEST UNIT READY): make sure opening the handle that often is harmless.
-- Then: a full rip compared with AccurateRip, the stop button, eject, "open folder", the Cathédrale theme, a `cargo tauri build` installer, README install section, release notes.
+- **Build setup**: Rust with the MSVC toolchain (rustup default), Visual Studio Build Tools with "Desktop development with C++" (the C compiler builds LAME via mp3lame-sys, and ring), `cargo install tauri-cli`. WebView2 ships with Windows 10/11. `CARGO_TARGET_DIR` is a macOS-only workaround, not needed here.
+- **Smart App Control blocks the build**: with it on, Windows refuses to run unsigned, unknown executables, and randomly kills Cargo build scripts (os error 4551, "Une stratégie de contrôle d'application a bloqué ce fichier"). It must be turned off to build. It will also block the unsigned installer on users' machines; SmartScreen merely warns (README says so).
+- `drive/windows.rs`: `Drive::open(None)` takes the first `DRIVE_CDROM` letter; `--device` accepts `D`, `D:`, `\\.\D:`. Opens `\\.\D:` read-write (fallback read-only). The data buffer honors the adapter's `AlignmentMask` through a bounce buffer. A failing `DeviceIoControl` → `DriveNotResponding`; non-zero `ScsiStatus` → sense data.
+- Verified: no admin rights needed; pass-through works while Windows has the disc mounted (no unmount); the GUI's 1.5 s polling (one handle opened per poll) is harmless; a full secure rip matched AccurateRip 12/12.
+- `CreateFileW` needs the `Win32_Security` feature of `windows-sys` (its SECURITY_ATTRIBUTES parameter).
+- Ready from the Mac side: `tauri.windows.conf.json` (NSIS installer, `icons/icon.ico`); file names sanitized for Windows (`session::sanitize`); AAC hidden; output folder defaults to the user's Music folder.
 
 ## Tested hardware
 
-ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6. Debian KDE; macOS 27 on Apple Silicon (ASUS, accurate rip with C2, ISRC, MCN). Verified discs include rips matching AccurateRip 10/10 and 12/12, a damaged disc (suspicious sectors correctly reported), and discs absent from AccurateRip.
+ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6. Debian KDE; macOS 27 on Apple Silicon (ASUS, accurate rip with C2, ISRC, MCN); Windows 11 (ASUS, accurate rip 12/12 in secure mode, ISRC, MCN, pregaps). Verified discs include rips matching AccurateRip 10/10 and 12/12, a damaged disc (suspicious sectors correctly reported), and discs absent from AccurateRip.
 
 ## Roadmap
 
 `TODO.md` (French, for the user) lists postponed work and things the user has not tested yet: keep it up to date.
 
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
-- Windows: in progress, see "Windows port" above.
+- Windows: works, see "Windows" above; some GUI features still to check (TODO.md).
 - Output formats are complete for now. Opus and WavPack: user decided against them (WavPack's reference library was too much hassle to bundle). AAC is macOS only, option hidden on other OSes (user's requirement).
 - CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.

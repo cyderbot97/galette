@@ -7,7 +7,7 @@ On insère un CD, Galette le reconnaît sur MusicBrainz, extrait l'audio sans er
 vérifie le résultat avec AccurateRip et produit des fichiers correctement tagués
 (FLAC, ALAC, MP3, AIFF ou WAV, et AAC sur macOS).
 
-> État : début de développement. Sous Linux et macOS, Galette reconnaît le CD sur MusicBrainz,
+> État : début de développement. Sous Linux, macOS et Windows, Galette reconnaît le CD sur MusicBrainz,
 > l'extrait avec correction du décalage du lecteur, vérifie chaque piste avec
 > AccurateRip et produit des FLAC tagués avec leur pochette, un fichier `.cue`
 > (pré-gaps, ISRC, MCN) et un log. Mode sécurisé avec relectures et pointeurs C2.
@@ -48,6 +48,26 @@ fermez-la : elle empêche Galette d'accéder au disque. Un programme lancé depu
 le dossier Documents ne peut pas ouvrir le lecteur (protection de la vie privée
 de macOS) : d'où le dossier de compilation ailleurs.
 
+## Installer (Windows)
+
+Lancer `Galette_0.4.0_x64-setup.exe` (Windows 10 ou 11, 64 bits). Les droits
+administrateur ne sont pas nécessaires pour ripper.
+L'installateur n'est pas signé par un certificat : Windows SmartScreen affiche
+« Windows a protégé votre ordinateur ». Cliquer sur « Informations complémentaires »,
+puis « Exécuter quand même ». Si Smart App Control est activé, il bloque
+l'installateur sans proposer de passer outre.
+
+Pour le construire, il faut Rust (toolchain MSVC), les Visual Studio Build Tools
+avec « Développement Desktop en C++ » et `cargo install tauri-cli`. Smart App
+Control bloque les programmes intermédiaires de la compilation : le désactiver
+(Sécurité Windows → Contrôle des applications et du navigateur).
+
+```sh
+cd crates/galette-gui && cargo tauri build
+```
+
+L'installateur est dans `target/release/bundle/nsis/`.
+
 ## Essayer
 
 Il faut [Rust](https://rustup.rs). Pour l'application graphique sous Linux (Debian/Ubuntu) :
@@ -60,8 +80,8 @@ cargo run --release -p galette-gui
 En ligne de commande :
 
 ```sh
-cargo run -p galette-cli -- info                    # CD dans /dev/sr0 (Linux), premier lecteur (macOS)
-cargo run -p galette-cli -- info --device /dev/sr1  # macOS : --device disk4
+cargo run -p galette-cli -- info                    # CD dans /dev/sr0 (Linux), premier lecteur (macOS, Windows)
+cargo run -p galette-cli -- info --device /dev/sr1  # macOS : --device disk4, Windows : --device E:
 cargo run --release -p galette-cli -- rip -o ~/Musique             # FLAC + tags + pochette
 cargo run --release -p galette-cli -- rip -o ~/Musique --format wav
 cargo run --release -p galette-cli -- rip -o ~/Musique --format mp3 --mp3-quality v0   # ou v2, 320
@@ -110,6 +130,7 @@ crates/
                        communes à tous les OS
       linux.rs         envoi des commandes via l'ioctl SG_IO
       macos.rs         envoi des commandes via IOKit (SCSITask), démontage du disque
+      windows.rs       envoi des commandes via IOCTL_SCSI_PASS_THROUGH_DIRECT
     src/metadata/      métadonnées (MusicBrainz) et pochettes (Cover Art Archive)
     src/naming.rs      noms des dossiers et fichiers à partir de modèles ({albumartist}, {track}…)
     src/session.rs     déroulé complet d'un rip, partagé par toutes les interfaces
@@ -142,5 +163,5 @@ une commande SCSI au lecteur.
 - [x] MP3 (LAME) et AIFF, tags ID3
 - [x] ALAC (Apple Lossless), tags iTunes
 - [x] AAC (macOS, encodeur d'Apple, 256 kbit/s VBR)
-- [ ] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`)
+- [x] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), installateur NSIS
 - [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation

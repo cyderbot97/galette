@@ -13,5 +13,7 @@ Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
 - [ ] CTDB : vérification puis réparation des rips (protocole déjà étudié,
   commencer par la vérification seule).
-- [ ] Windows.
+- [ ] Windows : vérifier dans l'application installée le bouton stop pendant
+  un rip, l'éjection, « ouvrir le dossier », la désinstallation, et un lecteur
+  autre que l'ASUS.
 - [ ] HTOA (piste cachée avant la piste 1), CD-Text, pré-accentuation.
