@@ -10,7 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,9 @@ use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
 use galette_core::{ids, log, mp3, toc};
+
+/// Least time between two reading progress events sent to the window.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Default)]
 struct Shared {
@@ -267,8 +270,18 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
         let emit = |event: RipEvent| {
             let _ = app.emit("rip", event);
         };
+        // Reading progress comes after every few sectors, dozens of times a
+        // second: that many events kept WebKitGTK so busy that the window no
+        // longer answered clicks (the stop button). Ten a second is enough.
+        let mut last_progress = Instant::now() - PROGRESS_INTERVAL;
         let result = Drive::open(None).and_then(|mut drive| {
             session::rip(&mut drive, &disc, &settings, &mut |event| {
+                if let Event::TrackProgress { progress: Progress::Reading(_) | Progress::Verifying(_), .. } = event {
+                    if last_progress.elapsed() < PROGRESS_INTERVAL {
+                        return;
+                    }
+                    last_progress = Instant::now();
+                }
                 if let Some(event) = rip_event(event) {
                     emit(event);
                 }
