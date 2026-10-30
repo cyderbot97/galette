@@ -2,11 +2,6 @@
 
 Liste des choses repérées mais pas encore faites ou pas encore vérifiées.
 
-## À tester
-
-- [ ] **Linux** : vérifier que tout compile toujours sur Debian (AAC n'y existe pas
-  et l'option ne doit pas apparaître).
-
 ## Publication
 
 - [ ] Ajouter les paquets Linux (`.deb`, AppImage) à la release 0.2.0, à construire
