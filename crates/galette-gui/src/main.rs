@@ -206,6 +206,8 @@ struct DiscView {
     accuraterip: Option<usize>,
     tracks: Vec<TrackView>,
     releases: Vec<Release>,
+    /// The disc's own CD-Text, as a release without MusicBrainz identifiers.
+    cd_text: Option<Release>,
     /// The online lookup failed.
     warning: Option<Message>,
 }
@@ -253,6 +255,7 @@ fn read_disc(state: &Shared) -> CommandResult<DiscView> {
             })
             .collect(),
         releases: disc.releases.clone(),
+        cd_text: disc.cd_text_release(),
         warning,
     };
     *state.disc.lock().unwrap() = Some(disc);

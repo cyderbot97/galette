@@ -18,6 +18,7 @@ Cargo workspace, edition 2024:
 - `crates/galette-core` — the engine (no UI).
   - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport; `macos.rs` is the IOKit SCSITask transport (hand-written FFI, no extra crate); `windows.rs` is the IOCTL_SCSI_PASS_THROUGH_DIRECT transport (`windows-sys`).
   - `toc.rs`, `ids.rs` — TOC, MusicBrainz / FreeDB / AccurateRip disc IDs.
+  - `cdtext.rs` — CD-Text (READ TOC format 0101b, read in `Disc::read`, optional: refused by many drives/discs): block 0, ISO 8859-1/ASCII only, packs checked by CRC (zero CRC accepted). `Disc::cd_text_release` turns it into a `Release` without MusicBrainz ids; the GUI offers it in the release list (preselected when MusicBrainz has nothing), the CLI uses it when MusicBrainz has nothing, the log has a `CD-Text` line.
   - `metadata/` — MusicBrainz lookup, Cover Art Archive. `http.rs` retries 503/429 answers (Retry-After, else 1-2-4-8 s).
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
   - `rip.rs` — burst and secure reading (C2, comparison passes, re-reads).
@@ -77,4 +78,4 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
 - Windows: works, see "Windows" above; some GUI features still to check (TODO.md).
 - Output formats are complete for now. Opus and WavPack: user decided against them (WavPack's reference library was too much hassle to bundle). AAC is macOS only, option hidden on other OSes (user's requirement).
-- CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.
+- CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, pre-emphasis. CD-Text is done.

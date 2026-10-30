@@ -121,6 +121,24 @@ impl Drive {
         mmc::parse_toc(&buf[..len])
     }
 
+    /// The CD-Text of the disc, `None` if it has none. Asks for the length
+    /// first, then for the packs, as some drives reject large requests.
+    pub fn read_cd_text(&mut self) -> Result<Option<crate::cdtext::CdText>> {
+        let timeout = Duration::from_secs(10);
+        let mut header = [0u8; 4];
+        let len = self.transport.read(&mmc::read_cd_text_cdb(header.len()), &mut header, timeout)?;
+        if len < 2 {
+            return Ok(None);
+        }
+        let total = u16::from_be_bytes([header[0], header[1]]) as usize + 2;
+        if total <= header.len() {
+            return Ok(None);
+        }
+        let mut buf = vec![0u8; total];
+        let len = self.transport.read(&mmc::read_cd_text_cdb(buf.len()), &mut buf, timeout)?;
+        Ok(crate::cdtext::CdText::parse(&buf[..len]))
+    }
+
     /// Position of the laser over `lba` according to the Q sub-channel, or
     /// `None` if this sector's Q frame does not carry a position.
     pub fn read_q(&mut self, lba: u32) -> Result<Option<mmc::QPosition>> {

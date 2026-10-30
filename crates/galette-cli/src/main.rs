@@ -144,9 +144,14 @@ fn read_toc(drive: &mut Drive, device: &str) -> Result<Toc> {
 }
 
 fn info(device: &str, toc: Option<&str>, offline: bool) -> Result<()> {
-    let toc = match toc {
-        Some(text) => Toc::parse_musicbrainz(text)?,
-        None => read_toc(&mut Drive::open(Some(device))?, device)?,
+    let (toc, cd_text) = match toc {
+        Some(text) => (Toc::parse_musicbrainz(text)?, None),
+        None => {
+            let mut drive = Drive::open(Some(device))?;
+            let toc = read_toc(&mut drive, device)?;
+            // Optional: many drives and discs have none.
+            (toc, drive.read_cd_text().ok().flatten())
+        }
     };
 
     println!("Track  Start      Length    Type");
@@ -166,6 +171,15 @@ fn info(device: &str, toc: Option<&str>, offline: bool) -> Result<()> {
     println!("MusicBrainz Disc ID  {}", ids::musicbrainz(&toc));
     println!("FreeDB ID            {:08x}", ids::freedb(&toc));
     println!("AccurateRip ID       {:03}-{:08x}-{:08x}-{:08x}", ar.track_count, ar.id1, ar.id2, ar.freedb);
+    if let Some(text) = &cd_text {
+        println!();
+        println!("CD-Text: {} – {}", text.performer(0).unwrap_or("?"), text.title(0).unwrap_or("?"));
+        for track in toc.audio_tracks() {
+            let n = usize::from(track.number);
+            let performer = text.performer(n).map(|p| format!("  ({p})")).unwrap_or_default();
+            println!("    {:>2}. {}{performer}", track.number, text.title(n).unwrap_or("?"));
+        }
+    }
 
     if offline {
         return Ok(());
@@ -233,10 +247,16 @@ fn rip(args: &RipArgs) -> Result<()> {
     println!("Offset   {offset:+} samples");
 
     let release = match disc.releases.len() {
-        0 => {
-            println!("Album    not found on MusicBrainz, tracks will be numbered only");
-            None
-        }
+        0 => match disc.cd_text_release() {
+            Some(release) => {
+                println!("Album    not found on MusicBrainz, titles taken from the disc's CD-Text");
+                Some(release)
+            }
+            None => {
+                println!("Album    not found on MusicBrainz, tracks will be numbered only");
+                None
+            }
+        },
         n if args.release == 0 || args.release > n => bail!("--release must be between 1 and {n}"),
         _ => Some(disc.releases[args.release - 1].clone()),
     };

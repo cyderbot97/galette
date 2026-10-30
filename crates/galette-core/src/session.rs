@@ -22,6 +22,7 @@ use crate::rip::{self, Mode, Progress};
 use crate::toc::Toc;
 #[cfg(target_os = "macos")]
 use crate::aac;
+use crate::cdtext::CdText;
 use crate::{Error, Result, aiff, alac, cue, flac, gaps, log, mp3, tags, wav};
 
 /// What we know about the disc in the drive.
@@ -36,6 +37,8 @@ pub struct Disc {
     pub accuraterip: Option<Vec<Pressing>>,
     /// Read offset of the drive from the AccurateRip database.
     pub offset: Option<i32>,
+    /// Titles stored on the disc, if any (and if the drive reads them).
+    pub cd_text: Option<CdText>,
 }
 
 impl Disc {
@@ -48,7 +51,19 @@ impl Disc {
             releases: Vec::new(),
             accuraterip: None,
             offset: None,
+            cd_text: match drive.read_cd_text() {
+                Ok(text) => text,
+                Err(e) if e.is_drive_failure() => return Err(e),
+                // Many drives and discs have none: the command is refused.
+                Err(_) => None,
+            },
         })
+    }
+
+    /// The CD-Text as a release to start from, if the disc has some.
+    pub fn cd_text_release(&self) -> Option<Release> {
+        let tracks = self.toc.audio_tracks().map(|t| t.number);
+        self.cd_text.as_ref().map(|text| text.release(tracks))
     }
 
     /// Looks the disc up on MusicBrainz and AccurateRip, and the drive in the
@@ -331,6 +346,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         toc,
         release,
         mcn: subcode.mcn.as_deref(),
+        cd_text: disc.cd_text.as_ref(),
         accuraterip_sets: disc.accuraterip.as_ref().map(Vec::len),
         tracks: &track_logs,
     };

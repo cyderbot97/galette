@@ -29,6 +29,7 @@ const STRINGS = {
     "album.coverLoading": "Chargement…",
     "album.edition": "Édition",
     "album.manual": "Saisie manuelle",
+    "album.cdText": "CD-Text du disque : {artist} – {title}",
     "album.artist": "Artiste",
     "album.title": "Titre de l'album",
     "album.year": "Année",
@@ -38,6 +39,7 @@ const STRINGS = {
     "badge.accuraterip": "AccurateRip : {sets} jeux de sommes",
     "badge.noAccuraterip": "Absent d'AccurateRip",
     "badge.tracks": "{count} pistes",
+    "badge.cdText": "CD-Text ✓",
 
     // Tracks
     "tracks.title": "Titre",
@@ -169,6 +171,7 @@ const STRINGS = {
     "album.coverLoading": "Loading…",
     "album.edition": "Release",
     "album.manual": "Manual entry",
+    "album.cdText": "Disc's CD-Text: {artist} – {title}",
     "album.artist": "Artist",
     "album.title": "Album title",
     "album.year": "Year",
@@ -178,6 +181,7 @@ const STRINGS = {
     "badge.accuraterip": "AccurateRip: {sets} checksum sets",
     "badge.noAccuraterip": "Not in AccurateRip",
     "badge.tracks": "{count} tracks",
+    "badge.cdText": "CD-Text ✓",
 
     "tracks.title": "Title",
     "tracks.artist": "Artist",

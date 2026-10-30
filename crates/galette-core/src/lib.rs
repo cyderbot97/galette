@@ -10,6 +10,7 @@ pub mod aac;
 pub mod accuraterip;
 pub mod aiff;
 pub mod alac;
+pub mod cdtext;
 pub mod cue;
 pub mod drive;
 pub mod error;

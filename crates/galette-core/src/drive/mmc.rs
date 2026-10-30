@@ -55,6 +55,12 @@ pub fn parse_inquiry(data: &[u8]) -> Result<DriveInfo> {
     Ok(DriveInfo { vendor: text(8..16), product: text(16..32), revision: text(32..36) })
 }
 
+/// READ TOC/PMA/ATIP, format 0101b: the CD-Text packs of the lead-in.
+pub fn read_cd_text_cdb(alloc_len: usize) -> [u8; 10] {
+    let len = (alloc_len as u16).to_be_bytes();
+    [READ_TOC, 0, 0x05, 0, 0, 0, 0, len[0], len[1], 0]
+}
+
 /// READ TOC/PMA/ATIP, format 0000b (formatted TOC), addresses as LBA.
 pub fn read_toc_cdb(alloc_len: usize) -> [u8; 10] {
     let len = (alloc_len as u16).to_be_bytes();

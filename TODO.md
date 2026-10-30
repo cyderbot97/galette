@@ -15,6 +15,10 @@ testée, et on la raye une fois vérifiée.
 - [ ] Message sans lecteur : débrancher le lecteur, la fenêtre doit dire
   « Aucun lecteur détecté. Branchez un lecteur CD. » (nouveau).
 - [ ] Formats ALAC, AIFF et WAV (seuls FLAC et MP3 ont été rippés sous Linux).
+- [ ] CD-Text (nouveau) : sur un disque qui en a, la liste Édition propose
+  « CD-Text du disque : … » et le badge « CD-Text ✓ » s'affiche ; le log a
+  une ligne « CD-Text ». Vérifier aussi qu'un disque sans CD-Text se lit
+  normalement (`galette info` affiche le CD-Text s'il y en a).
 - [ ] Thème Cathédrale.
 - [ ] Rip d'un album déjà rippé dans un autre format : le nouveau doit aller
   dans « Album (FORMAT) » sans toucher au premier.
@@ -40,9 +44,13 @@ testée, et on la raye une fois vérifiée.
 - [ ] Formats ALAC, MP3, AIFF et WAV (le rip testé était en FLAC).
 - [ ] Thème Cathédrale.
 - [ ] Rip d'un album déjà rippé dans un autre format.
+- [ ] CD-Text (nouveau) : sur un disque qui en a, la liste Édition propose
+  « CD-Text du disque : … » et le badge « CD-Text ✓ » s'affiche ; le log a
+  une ligne « CD-Text ». Vérifier aussi qu'un disque sans CD-Text se lit
+  normalement.
 
 ## Plus tard
 
 - [ ] CTDB : vérification puis réparation des rips (protocole déjà étudié,
   commencer par la vérification seule).
-- [ ] HTOA (piste cachée avant la piste 1), CD-Text, pré-accentuation.
+- [ ] HTOA (piste cachée avant la piste 1), pré-accentuation.

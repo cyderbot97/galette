@@ -164,4 +164,5 @@ une commande SCSI au lecteur.
 - [x] ALAC (Apple Lossless), tags iTunes
 - [x] AAC (macOS, encodeur d'Apple, 256 kbit/s VBR)
 - [x] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), installateur NSIS
-- [ ] CTDB (vérification et réparation), HTOA, CD-Text, pré-accentuation
+- [x] CD-Text : titres lus sur le disque quand MusicBrainz ne le connaît pas
+- [ ] CTDB (vérification et réparation), HTOA, pré-accentuation

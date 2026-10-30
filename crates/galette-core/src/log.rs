@@ -21,6 +21,7 @@ pub struct RipLog<'a> {
     pub toc: &'a Toc,
     pub release: Option<&'a Release>,
     pub mcn: Option<&'a str>,
+    pub cd_text: Option<&'a crate::cdtext::CdText>,
     /// Number of checksum sets in AccurateRip, `None` if the disc is unknown.
     pub accuraterip_sets: Option<usize>,
     pub tracks: &'a [TrackLog],
@@ -84,6 +85,8 @@ impl RipLog<'_> {
         line(format!("MusicBrainz Disc ID  {}", ids::musicbrainz(self.toc)));
         line(format!("AccurateRip ID       {:03}-{:08x}-{:08x}-{:08x}", ar.track_count, ar.id1, ar.id2, ar.freedb));
         line(format!("MCN                  {}", self.mcn.map(str::to_string).unwrap_or_else(none)));
+        let cd_text = self.cd_text.map(|t| format!("{} - {}", t.performer(0).unwrap_or("?"), t.title(0).unwrap_or("?")));
+        line(format!("CD-Text              {}", cd_text.unwrap_or_else(none)));
         line(String::new());
 
         line("TOC".to_string());

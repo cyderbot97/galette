@@ -79,10 +79,16 @@ function showDisc() {
   const select = $("release");
   select.replaceChildren();
   disc.releases.forEach((release, i) => select.add(new Option(describe(release), i)));
+  // The disc's own titles, first choice when MusicBrainz does not know it.
+  if (disc.cdText) {
+    const cdText = new Option("", "cdtext");
+    localize(cdText, "album.cdText", { artist: disc.cdText.artist, title: disc.cdText.title });
+    select.add(cdText);
+  }
   const manual = new Option("", -1);
   localize(manual, "album.manual");
   select.add(manual);
-  select.value = disc.releases.length ? 0 : -1;
+  select.value = disc.releases.length ? 0 : disc.cdText ? "cdtext" : -1;
 
   const badges = $("badges");
   badges.replaceChildren(
@@ -92,6 +98,7 @@ function showDisc() {
       : badge("badge.accuraterip", { sets: disc.accuraterip }, "good"),
     badge("badge.tracks", { count: disc.tracks.filter((t) => t.isAudio).length }),
   );
+  if (disc.cdText) badges.append(badge("badge.cdText", {}, "good"));
 
   buildTracks();
   updateRipButton();
@@ -120,7 +127,9 @@ function badge(key, params = {}, kind = "") {
 }
 
 function currentRelease() {
-  const i = Number($("release").value);
+  const value = $("release").value;
+  if (value === "cdtext") return disc.cdText;
+  const i = Number(value);
   return i >= 0 ? disc.releases[i] : null;
 }
 
@@ -186,7 +195,7 @@ async function loadCover(release) {
   const img = $("cover");
   img.hidden = true;
   $("cover-none").hidden = false;
-  if (!release) return;
+  if (!release?.id) return; // covers come from MusicBrainz releases only
   localize($("cover-none"), "album.coverLoading");
   const url = await invoke("cover", { release }).catch(() => null);
   if (currentRelease() !== release) return; // another edition was chosen meanwhile
