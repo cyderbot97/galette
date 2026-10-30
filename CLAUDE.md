@@ -18,11 +18,11 @@ Cargo workspace, edition 2024:
 - `crates/galette-core` — the engine (no UI).
   - `drive/` — SCSI/MMC over a `Transport` trait per OS. `mmc.rs` builds CDBs and parses replies (OS-independent); `linux.rs` is the SG_IO transport; `macos.rs` is the IOKit SCSITask transport (hand-written FFI, no extra crate). **The Windows transport (IOCTL_SCSI_PASS_THROUGH_DIRECT) is not written yet**: there `Drive::open` returns `Error::Unsupported`, everything else compiles.
   - `toc.rs`, `ids.rs` — TOC, MusicBrainz / FreeDB / AccurateRip disc IDs.
-  - `metadata/` — MusicBrainz lookup, Cover Art Archive.
+  - `metadata/` — MusicBrainz lookup, Cover Art Archive. `http.rs` retries 503/429 answers (Retry-After, else 1-2-4-8 s).
   - `accuraterip.rs` — CRC v1/v2, database fetch, drive offsets database.
   - `rip.rs` — burst and secure reading (C2, comparison passes, re-reads).
   - `gaps.rs` — pregap detection from the Q sub-channel (binary search).
-  - Output formats: `flac.rs`, `alac.rs` (alac-encoder, verified by decoding with the `alac` crate; `m4a.rs` is our own minimal MP4 muxer, reusable for AAC; tags added by mp4ameta), `mp3.rs` (LAME, bundled C source via mp3lame-sys; the LAME tag is written over the first frame for gapless playback), `aiff.rs`, `wav.rs`. `session::Format` lists them; `session::encode` dispatches. `tags.rs` builds Vorbis comments (Picard names) and converts them to ID3v2.4 for MP3/AIFF and to iTunes atoms for .m4a.
+  - Output formats: `flac.rs`, `alac.rs` (alac-encoder, verified by decoding with the `alac` crate; `m4a.rs` is our own minimal MP4 muxer, shared with AAC; tags added by mp4ameta), `aac.rs` (macOS only, `#[cfg]`: Apple's AudioToolbox AudioConverter via hand-written FFI, 256 kbit/s constrained VBR; priming frames declared by an `elst` edit list and the `iTunSMPB` tag for gapless playback; `Format::ALL` tells the GUI which formats exist so AAC is not offered elsewhere), `mp3.rs` (LAME, bundled C source via mp3lame-sys; the LAME tag is written over the first frame for gapless playback), `aiff.rs`, `wav.rs`. `session::Format` lists them; `session::encode` dispatches. `tags.rs` builds Vorbis comments (Picard names) and converts them to ID3v2.4 for MP3/AIFF and to iTunes atoms for .m4a.
   - `cue.rs`, `log.rs`, `naming.rs`.
   - `session.rs` — the whole rip of a disc, emitting `Event`s; used by both CLI and GUI.
 - `crates/galette-cli` — binary `galette` (`galette info`, `galette rip`).
@@ -66,5 +66,5 @@ ASUS SDRW-08U9M-U and Samsung (TSSTcorp) SE-S084C over USB, both read offset +6.
 
 - Grow the app on Linux + macOS (Apple Silicon) first. No Intel Mac build planned for now (user's decision).
 - Windows transport: later, once the app has matured.
-- More output formats, in this order (Opus: user decided against it): AAC (macOS only, AudioToolbox; option hidden on other OSes: user's requirement), WavPack.
+- More output formats (Opus: user decided against it): WavPack. AAC is done (macOS only, option hidden on other OSes: user's requirement).
 - CTDB verification and repair (protocol already studied: lookup2.php, RS over GF(2^16) poly 0x1100B, stride 5880 samples; user postponed it as too complex for now), HTOA, CD-Text, pre-emphasis.

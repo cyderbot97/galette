@@ -12,6 +12,9 @@ pub struct Track<'a> {
     pub frames_per_packet: u32,
     /// Total number of frames (samples per channel).
     pub frames: u32,
+    /// Silent frames the encoder put before the audio (AAC); when not zero,
+    /// every packet is full and an edit list tells players to skip them.
+    pub priming: u32,
 }
 
 /// A box: its size, its four-character type, its content.
@@ -60,7 +63,10 @@ pub fn write(track: &Track) -> Vec<u8> {
 /// The index of a track whose packets start at `data_offset` in the file.
 fn moov(track: &Track, data_offset: u32) -> Vec<u8> {
     let rate = track.sample_rate;
+    // What players play, and what the packets hold (more with priming).
     let duration = track.frames;
+    let count = track.packets.len() as u32;
+    let media_duration = if track.priming > 0 { count * track.frames_per_packet } else { duration };
     let zero = 0u32.to_be_bytes();
 
     let mvhd = full(b"mvhd", 0, &concat(&[
@@ -91,7 +97,7 @@ fn moov(track: &Track, data_offset: u32) -> Vec<u8> {
     let mdhd = full(b"mdhd", 0, &concat(&[
         &zero, &zero,
         &rate.to_be_bytes(),
-        &duration.to_be_bytes(),
+        &media_duration.to_be_bytes(),
         &0x55C4u16.to_be_bytes(), // language "und"
         &[0; 2],
     ]));
@@ -100,10 +106,9 @@ fn moov(track: &Track, data_offset: u32) -> Vec<u8> {
     let dref = full(b"dref", 0, &concat(&[&1u32.to_be_bytes(), &full(b"url ", 1, &[])]));
     let dinf = boxed(b"dinf", &dref);
 
-    let count = track.packets.len() as u32;
     let stsd = full(b"stsd", 0, &concat(&[&1u32.to_be_bytes(), track.sample_entry]));
     // Packet durations: all full, except perhaps the last one.
-    let last = duration - track.frames_per_packet * count.saturating_sub(1);
+    let last = media_duration - track.frames_per_packet * count.saturating_sub(1);
     let mut runs = vec![(count.saturating_sub(1), track.frames_per_packet), (1, last)];
     runs.retain(|&(n, _)| n > 0);
     if runs.len() == 2 && runs[1].1 == runs[0].1 {
@@ -127,6 +132,18 @@ fn moov(track: &Track, data_offset: u32) -> Vec<u8> {
     let stbl = boxed(b"stbl", &concat(&[&stsd, &stts, &stsc, &stsz, &stco]));
     let minf = boxed(b"minf", &concat(&[&smhd, &dinf, &stbl]));
     let mdia = boxed(b"mdia", &concat(&[&mdhd, &hdlr, &minf]));
-    let trak = boxed(b"trak", &concat(&[&tkhd, &mdia]));
+    // Play `duration` frames, starting after the priming ones.
+    let edts = if track.priming > 0 {
+        let elst = full(b"elst", 0, &concat(&[
+            &1u32.to_be_bytes(),
+            &duration.to_be_bytes(),
+            &track.priming.to_be_bytes(),
+            &0x0001_0000u32.to_be_bytes(), // rate 1.0
+        ]));
+        boxed(b"edts", &elst)
+    } else {
+        Vec::new()
+    };
+    let trak = boxed(b"trak", &concat(&[&tkhd, &edts, &mdia]));
     boxed(b"moov", &concat(&[&mvhd, &trak]))
 }

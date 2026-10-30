@@ -110,6 +110,9 @@ enum Format {
     Aiff,
     /// Lossy, with tags and cover art.
     Mp3,
+    /// Lossy (.m4a, Apple's encoder, 256 kbit/s), with tags and cover art.
+    #[cfg(target_os = "macos")]
+    Aac,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -211,6 +214,8 @@ fn rip(args: &RipArgs) -> Result<()> {
         Format::Wav => session::Format::Wav,
         Format::Aiff => session::Format::Aiff,
         Format::Mp3 => session::Format::Mp3,
+        #[cfg(target_os = "macos")]
+        Format::Aac => session::Format::Aac,
     };
     let mp3_quality = match args.mp3_quality {
         Mp3Quality::V0 => mp3::Quality::V0,

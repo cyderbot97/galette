@@ -19,6 +19,8 @@ use crate::metadata::{Release, musicbrainz};
 use crate::naming::Naming;
 use crate::rip::{self, Mode, Progress};
 use crate::toc::Toc;
+#[cfg(target_os = "macos")]
+use crate::aac;
 use crate::{Error, Result, aiff, alac, cue, flac, gaps, log, mp3, tags, wav};
 
 /// What we know about the disc in the drive.
@@ -77,9 +79,24 @@ pub enum Format {
     Aiff,
     /// Lossy, with tags and cover art.
     Mp3,
+    /// Lossy (Apple's encoder) in an .m4a file, with tags and cover art. Only
+    /// on macOS, whose system provides the encoder.
+    #[cfg(target_os = "macos")]
+    Aac,
 }
 
 impl Format {
+    /// The formats this build can write.
+    pub const ALL: &[Format] = &[
+        Format::Flac,
+        Format::Alac,
+        #[cfg(target_os = "macos")]
+        Format::Aac,
+        Format::Mp3,
+        Format::Aiff,
+        Format::Wav,
+    ];
+
     pub fn extension(self) -> &'static str {
         match self {
             Format::Flac => "flac",
@@ -87,6 +104,8 @@ impl Format {
             Format::Wav => "wav",
             Format::Aiff => "aiff",
             Format::Mp3 => "mp3",
+            #[cfg(target_os = "macos")]
+            Format::Aac => "m4a",
         }
     }
 
@@ -100,6 +119,8 @@ impl Format {
         match self {
             Format::Flac | Format::Alac | Format::Wav => "WAVE",
             Format::Aiff => "AIFF",
+            #[cfg(target_os = "macos")]
+            Format::Aac => "WAVE",
             Format::Mp3 => "MP3",
         }
     }
@@ -313,6 +334,8 @@ fn encode(settings: &Settings, audio: &[u8], tags: &[(&str, String)]) -> Result<
             aiff::write(&mut file, audio, Some(&id3))?;
         }
         Format::Mp3 => file = mp3::encode(audio, settings.mp3_quality, &tags::id3(tags, cover))?,
+        #[cfg(target_os = "macos")]
+        Format::Aac => file = aac::encode(audio, &tags::mp4(tags, cover))?,
     }
     Ok(file)
 }
@@ -322,6 +345,8 @@ fn format_text(settings: &Settings) -> String {
     match settings.format {
         Format::Mp3 => format!("mp3 (LAME {}, {})", mp3lame_encoder::mp3lame_version(), settings.mp3_quality.label()),
         Format::Alac => "alac (m4a)".to_string(),
+        #[cfg(target_os = "macos")]
+        Format::Aac => "aac (m4a, Apple AudioToolbox, 256 kbit/s VBR)".to_string(),
         format => format.extension().to_string(),
     }
 }

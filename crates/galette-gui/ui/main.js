@@ -492,6 +492,8 @@ function signed(n) {
 // ---------- Start ----------
 
 (async () => {
+  const formats = await invoke("formats");
+  for (const option of [...$("format").options]) if (!formats.includes(option.value)) option.remove();
   prefs = await invoke("get_prefs");
   showPrefs();
   scan();

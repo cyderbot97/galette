@@ -43,6 +43,7 @@ pub fn encode(audio: &[u8], tag: &mp4ameta::Tag) -> Result<Vec<u8>> {
         packets: &packets,
         frames_per_packet: FRAMES_PER_PACKET,
         frames: frames as u32,
+        priming: 0,
     });
     let mut file = Cursor::new(file);
     tag.write_to(&mut file).map_err(|e| Error::Encode(format!("cannot write the MP4 tags: {e}")))?;

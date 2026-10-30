@@ -91,6 +91,13 @@ fn get_prefs(state: State<'_, AppState>) -> Prefs {
     state.prefs.lock().unwrap().clone()
 }
 
+/// The formats this build can write, so that the window offers only those
+/// (AAC exists on macOS only).
+#[tauri::command]
+fn formats() -> &'static [Format] {
+    Format::ALL
+}
+
 #[tauri::command]
 fn save_prefs(state: State<'_, AppState>, prefs: Prefs) -> CommandResult<()> {
     if let Some(path) = state.prefs_path.lock().unwrap().as_ref() {
@@ -411,6 +418,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            formats,
             scan,
             cover,
             start_rip,

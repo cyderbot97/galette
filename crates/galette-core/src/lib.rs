@@ -5,6 +5,8 @@
 //! extraction, AccurateRip verification and encoding.
 //! The CLI and the future desktop GUI are thin layers on top of it.
 
+#[cfg(target_os = "macos")]
+pub mod aac;
 pub mod accuraterip;
 pub mod aiff;
 pub mod alac;
