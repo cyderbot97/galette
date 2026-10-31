@@ -49,10 +49,10 @@ enum Command {
         #[arg(short, long, default_value = drive::default_device())]
         device: String,
 
-        /// Offsets that another disc matched (e.g. --among=+6,+673): only
-        /// those are kept.
-        #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
-        among: Vec<i32>,
+        /// Offsets other discs matched, with their confidence, as this
+        /// command prints them (e.g. --among=+6:22,+673:200).
+        #[arg(long, value_delimiter = ',', allow_hyphen_values = true, value_parser = parse_match)]
+        among: Vec<offset::Match>,
     },
 
     /// Measure the drive's cache, to make sure that secure mode's re-reads
@@ -103,6 +103,10 @@ struct RipArgs {
     /// Do not download the cover art.
     #[arg(long)]
     no_cover: bool,
+
+    /// Do not add ReplayGain tags (loudness, for players to level tracks).
+    #[arg(long)]
+    no_replaygain: bool,
 
     /// Do not ask the drive for C2 pointers (for drives that report them badly).
     #[arg(long)]
@@ -167,7 +171,15 @@ fn main() -> Result<()> {
     }
 }
 
-fn find_offset(device: &str, among: &[i32]) -> Result<()> {
+/// `+6:22`: an offset and its confidence.
+fn parse_match(text: &str) -> std::result::Result<offset::Match, String> {
+    let (offset, confidence) = text.split_once(':').ok_or("expected offset:confidence, e.g. +6:22")?;
+    let offset = offset.trim_start_matches('+').parse().map_err(|_| format!("not an offset: {offset}"))?;
+    let confidence = confidence.parse().map_err(|_| format!("not a confidence: {confidence}"))?;
+    Ok(offset::Match { offset, confidence })
+}
+
+fn find_offset(device: &str, among: &[offset::Match]) -> Result<()> {
     let mut drive = Drive::open(Some(device))?;
     let mut disc = Disc::read(&mut drive).with_context(|| format!("cannot read the disc in {device}"))?;
     println!("Drive    {} {} ({})", disc.drive.vendor, disc.drive.product, disc.drive.revision);
@@ -189,20 +201,18 @@ fn find_offset(device: &str, among: &[i32]) -> Result<()> {
         offset::Detection::Found(matches) => {
             let all = matches.len();
             let matches = if among.is_empty() { matches } else { offset::among(&matches, among) };
-            match matches.as_slice() {
-                [] => println!("None of the {all} offsets this disc matches is among those given: start again without --among"),
-                [found] => {
-                    println!("Found    read offset {:+} samples (AccurateRip confidence {})", found.offset, found.confidence);
-                    println!("Rip with --offset {:+}", found.offset);
+            if matches.is_empty() {
+                println!("None of the {all} offsets this disc matches is among those given: start again without --among");
+            } else if let Some(found) = offset::decide(&matches, !among.is_empty()) {
+                println!("Found    read offset {:+} samples (AccurateRip confidence {})", found.offset, found.confidence);
+                println!("Rip with --offset {:+}", found.offset);
+            } else {
+                println!("Several offsets match: this disc exists in pressings shifted from one another.");
+                for m in &matches {
+                    println!("         {:+} (AccurateRip confidence {})", m.offset, m.confidence);
                 }
-                several => {
-                    println!("Several offsets match: this disc exists in pressings shifted from one another.");
-                    for m in several {
-                        println!("         {:+} (AccurateRip confidence {})", m.offset, m.confidence);
-                    }
-                    let list: Vec<String> = several.iter().map(|m| format!("{:+}", m.offset)).collect();
-                    println!("Insert another disc and run: galette offset --among={}", list.join(","));
-                }
+                let list: Vec<String> = matches.iter().map(|m| format!("{:+}:{}", m.offset, m.confidence)).collect();
+                println!("Insert another disc and run: galette offset --among={}", list.join(","));
             }
         }
         offset::Detection::NoMatch => {
@@ -389,6 +399,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         cover,
         embed_cover: true,
         save_cover: true,
+        replaygain: !args.no_replaygain,
         tracks: args.tracks.clone(),
         cancel: None,
     };

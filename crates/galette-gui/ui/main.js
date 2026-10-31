@@ -526,6 +526,7 @@ function openPrefs() {
   $("pref-mp3-quality").value = prefs.mp3Quality;
   $("pref-embed").checked = prefs.embedCover;
   $("pref-save-cover").checked = prefs.saveCover;
+  $("pref-replaygain").checked = prefs.replaygain;
   $("pref-eject").checked = prefs.ejectAfter;
   $("pref-theme").value = prefs.theme;
   $("pref-language").value = prefs.language;
@@ -612,6 +613,7 @@ $("prefs").addEventListener("close", () => {
   prefs.mp3Quality = $("pref-mp3-quality").value;
   prefs.embedCover = $("pref-embed").checked;
   prefs.saveCover = $("pref-save-cover").checked;
+  prefs.replaygain = $("pref-replaygain").checked;
   prefs.ejectAfter = $("pref-eject").checked;
   prefs.theme = $("pref-theme").value;
   prefs.language = $("pref-language").value;

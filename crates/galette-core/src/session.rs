@@ -23,7 +23,7 @@ use crate::toc::Toc;
 #[cfg(target_os = "macos")]
 use crate::aac;
 use crate::cdtext::CdText;
-use crate::{Error, Result, aiff, alac, ctdb, cue, flac, gaps, log, mp3, parity, tags, wav};
+use crate::{Error, Result, aiff, alac, ctdb, cue, flac, gaps, log, mp3, parity, replaygain, tags, wav};
 
 /// What we know about the disc in the drive.
 #[derive(Clone)]
@@ -185,6 +185,8 @@ pub struct Settings {
     pub embed_cover: bool,
     /// Save the cover next to the files, as `cover.jpg`.
     pub save_cover: bool,
+    /// Add ReplayGain tags (track, and album for a whole disc).
+    pub replaygain: bool,
     /// Track numbers to rip, all of them if empty. 0 is the hidden track
     /// before track 1, if the disc has one.
     pub tracks: Vec<u8>,
@@ -333,7 +335,16 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         .filter(|entries| entries.iter().any(|e| e.parity_url.is_some()))
         .and_then(|_| parity::Syndromes::new(disc_samples));
     let mut held: Vec<Held> = Vec::new();
-    let mut ripped = RippedTracks { settings, release, toc, album_dir: &album_dir, disc_id: &disc_id, audio_count, pressings };
+    let mut ripped = RippedTracks {
+        settings,
+        release,
+        toc,
+        album_dir: &album_dir,
+        disc_id: &disc_id,
+        audio_count,
+        pressings,
+        loudness: Vec::new(),
+    };
     let title = |number: u8| {
         release
             .and_then(|r| r.tracks.iter().find(|t| t.number == number as u32))
@@ -423,6 +434,18 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     track_logs.sort_by_key(|t| t.number);
     cue_tracks.sort_by_key(|t| t.index);
 
+    // The album's gain needs every track: ReplayGain tags go in at the end,
+    // the album's only if the whole disc was ripped.
+    let album = (whole_disc && !ripped.loudness.is_empty())
+        .then(|| replaygain::album(ripped.loudness.iter().map(|(_, analysis)| analysis)));
+    for (path, analysis) in &ripped.loudness {
+        cancelled()?;
+        let tags = replaygain::tags(analysis, album.as_ref());
+        if !tags.is_empty() {
+            add_tags(settings.format, path, &tags)?;
+        }
+    }
+
     let ctdb = match (&disc.ctdb, crcs) {
         (ctdb::Lookup::Unavailable, _) => ctdb::Status::Unavailable,
         (ctdb::Lookup::NotFound, _) => ctdb::Status::NotFound,
@@ -452,6 +475,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         accuraterip_sets: disc.accuraterip.as_ref().map(Vec::len),
         tracks: &track_logs,
         hidden_track: &hidden_track,
+        replaygain_album: album.as_ref().and_then(|a| Some((a.gain()?, a.peak))),
     };
     // A partial rip must not replace the log of the full one.
     let log_name = if track_logs.len() == audio_count {
@@ -509,6 +533,8 @@ struct RippedTracks<'a> {
     disc_id: &'a str,
     audio_count: usize,
     pressings: Option<&'a [Pressing]>,
+    /// Each file written, with the loudness of its audio for ReplayGain.
+    loudness: Vec<(PathBuf, replaygain::Analysis)>,
 }
 
 impl RippedTracks<'_> {
@@ -523,7 +549,7 @@ impl RippedTracks<'_> {
         let toc = self.toc;
         let number = toc.tracks[index].number;
         let audio = read.audio;
-        let file_name = self.write_file(number, &audio, isrc.as_deref(), on_event)?;
+        let (file_name, replaygain) = self.write_file(number, &audio, isrc.as_deref(), on_event)?;
 
         let checksums = accuraterip::checksums(&audio, position + 1, self.audio_count);
         let track_log = log::TrackLog {
@@ -537,6 +563,7 @@ impl RippedTracks<'_> {
             checksums,
             verdict: accuraterip::verify(self.pressings, position, checksums),
             read: read.report,
+            replaygain,
         };
         on_event(Event::TrackDone(&track_log));
         Ok((track_log, cue::TrackFile { index, file_name, pregap: pregaps[index], isrc }))
@@ -544,7 +571,7 @@ impl RippedTracks<'_> {
 
     /// Encodes and writes the hidden track, as track 0, and reports it done.
     fn write_hidden(&mut self, read: rip::TrackRead, on_event: &mut dyn FnMut(Event)) -> Result<log::TrackLog> {
-        let file_name = self.write_file(0, &read.audio, None, on_event)?;
+        let (file_name, replaygain) = self.write_file(0, &read.audio, None, on_event)?;
         let track_log = log::TrackLog {
             number: 0,
             start: 0,
@@ -556,13 +583,21 @@ impl RippedTracks<'_> {
             checksums: accuraterip::Checksums { v1: 0, v2: 0 },
             verdict: Verdict::Unknown,
             read: read.report,
+            replaygain,
         };
         on_event(Event::TrackDone(&track_log));
         Ok(track_log)
     }
 
-    /// Writes the file of track `number`; returns its name.
-    fn write_file(&self, number: u8, audio: &[u8], isrc: Option<&str>, on_event: &mut dyn FnMut(Event)) -> Result<String> {
+    /// Writes the file of track `number`; returns its name and its ReplayGain
+    /// (the track's), if measured.
+    fn write_file(
+        &mut self,
+        number: u8,
+        audio: &[u8],
+        isrc: Option<&str>,
+        on_event: &mut dyn FnMut(Event),
+    ) -> Result<(String, Option<f64>)> {
         let (settings, release, toc) = (self.settings, self.release, self.toc);
         let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
         let path = self.album_dir.join(&file_name);
@@ -575,7 +610,25 @@ impl RippedTracks<'_> {
         }
         let file = encode(settings, audio, &tags)?;
         fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
-        Ok(file_name)
+        let mut gain = None;
+        if settings.replaygain && settings.format.has_tags() {
+            let analysis = replaygain::Analysis::new(audio);
+            gain = analysis.gain();
+            self.loudness.push((path, analysis));
+        }
+        Ok((file_name, gain))
+    }
+}
+
+/// Adds tags to a file already written in `format`.
+fn add_tags(format: Format, path: &Path, tags: &[(&'static str, String)]) -> Result<()> {
+    match format {
+        Format::Flac => tags::update_flac(path, tags),
+        Format::Mp3 | Format::Aiff => tags::update_id3(path, tags),
+        Format::Alac => tags::update_mp4(path, tags),
+        #[cfg(target_os = "macos")]
+        Format::Aac => tags::update_mp4(path, tags),
+        Format::Wav => Ok(()),
     }
 }
 

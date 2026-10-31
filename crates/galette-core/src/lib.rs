@@ -27,6 +27,7 @@ pub mod mp3;
 pub mod naming;
 pub mod offset;
 pub mod parity;
+pub mod replaygain;
 pub mod rip;
 pub mod session;
 pub mod tags;

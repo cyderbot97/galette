@@ -41,7 +41,7 @@ struct Shared {
     scanning: AtomicBool,
     /// Offsets a disc matched when looking for the drive's read offset,
     /// when there were several: the next disc picks among them.
-    offset_candidates: Mutex<Vec<i32>>,
+    offset_candidates: Mutex<Vec<offset::Match>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -62,6 +62,8 @@ struct Prefs {
     cache_kib: Option<u32>,
     embed_cover: bool,
     save_cover: bool,
+    /// Add ReplayGain tags.
+    replaygain: bool,
     eject_after: bool,
     theme: Theme,
     language: Language,
@@ -103,6 +105,7 @@ impl Default for Prefs {
             cache_kib: None,
             embed_cover: true,
             save_cover: true,
+            replaygain: true,
             eject_after: false,
             theme: Theme::Classic,
             language: Language::Auto,
@@ -409,6 +412,7 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
         cover,
         embed_cover: prefs.embed_cover && prefs.format.has_tags(),
         save_cover: prefs.save_cover,
+        replaygain: prefs.replaygain,
         tracks: request.tracks,
         cancel: Some(Arc::clone(&state.cancel)),
     };
@@ -535,14 +539,14 @@ async fn detect_offset(app: AppHandle, state: State<'_, AppState>) -> CommandRes
         // Another disc left candidates: the drive's offset is among them,
         // unless that disc was misread.
         let mut candidates = state.offset_candidates.lock().unwrap();
-        let narrowed = offset::among(&matches, &candidates);
-        let kept = if narrowed.is_empty() { matches } else { narrowed };
-        let offsets: Vec<i32> = kept.iter().map(|m| m.offset).collect();
-        if let [_] = offsets[..] {
+        let combined = offset::among(&matches, &candidates);
+        let (kept, several_discs) = if combined.is_empty() { (matches, false) } else { (combined, true) };
+        if let Some(found) = offset::decide(&kept, several_discs) {
             candidates.clear();
-            view("found", offsets)
+            view("found", vec![found.offset])
         } else {
-            *candidates = offsets.clone();
+            let offsets = kept.iter().map(|m| m.offset).collect();
+            *candidates = kept;
             view("ambiguous", offsets)
         }
     })

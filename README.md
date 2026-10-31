@@ -125,8 +125,19 @@ prend ce décalage dans la base d'AccurateRip ; pour un lecteur qui n'y est pas,
 connu d'AccurateRip et cherche le décalage, à ±3000 échantillons près, auquel
 elles correspondent à la base. Un disque pressé plusieurs fois peut
 correspondre à plusieurs décalages (les pressages sont souvent décalés entre
-eux) : il faut alors un second disque, et seul le décalage commun aux deux est
-gardé.
+eux) : il faut alors un second disque. Galette garde les décalages communs aux
+deux, avec leur plus faible confirmation, et retient celui qui est nettement
+mieux confirmé que les autres sur chaque disque (sinon, il demande un
+troisième disque).
+
+## ReplayGain
+
+Galette mesure le volume perçu de chaque piste (norme EBU R128 / ITU BS.1770)
+et ajoute les tags ReplayGain 2.0 (`REPLAYGAIN_TRACK_GAIN`, `…_PEAK`, et ceux
+de l'album pour un disque rippé en entier) : les lecteurs audio s'en servent
+pour jouer toutes les pistes au même volume (−18 LUFS). Le son n'est pas
+modifié. Désactivable dans les réglages (ou `--no-replaygain`) ; pas de tags
+en WAV.
 
 ## Piste cachée et pré-accentuation
 
@@ -155,6 +166,7 @@ crates/
     src/gaps.rs        détection des pré-gaps par le sous-canal Q
     src/offset.rs      recherche du décalage du lecteur avec un disque connu d'AccurateRip
     src/cache.rs       mesure du cache du lecteur
+    src/replaygain.rs  mesure du volume perçu (EBU R128) pour les tags ReplayGain
     src/cue.rs         fichier .cue (un fichier par piste, pré-gaps en fin de piste précédente)
     src/log.rs         log de rip
     src/wav.rs         écriture des fichiers WAV
@@ -203,3 +215,4 @@ une commande SCSI au lecteur.
   parité de la base, aidées par les erreurs C2 signalées par le lecteur
 - [x] Piste cachée avant la piste 1 (HTOA), pré-accentuation signalée
 - [x] Recherche du décalage d'un lecteur inconnu, test du cache du lecteur
+- [x] ReplayGain 2.0 (piste et album)

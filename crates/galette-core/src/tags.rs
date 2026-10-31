@@ -6,9 +6,11 @@
 
 use id3::frame::{Content, ExtendedText, Picture, PictureType, UniqueFileIdentifier};
 use id3::{Frame, TagLike};
+use std::path::Path;
 
 use crate::metadata::Release;
 use crate::metadata::coverart::CoverArt;
+use crate::{Error, Result};
 
 /// ID3 text frames holding a Vorbis comment as is.
 const ID3_TEXT: [(&str, &str); 9] = [
@@ -177,6 +179,45 @@ pub fn mp4(tags: &[(&str, String)], cover: Option<&CoverArt>) -> mp4ameta::Tag {
     tag
 }
 
+/// Tags added to a file already written, such as ReplayGain's, which needs
+/// the whole album: `tags` replace any of the same names. They are stored
+/// as plain Vorbis comments, user-defined (TXXX) ID3 frames or freeform MP4
+/// atoms named as the tags, as Picard does for ReplayGain.
+pub fn update_flac(path: &Path, tags: &[(&str, String)]) -> Result<()> {
+    let failed = |e: metaflac::Error| tag_error(path, e);
+    let mut tag = metaflac::Tag::read_from_path(path).map_err(failed)?;
+    for (key, value) in tags {
+        tag.set_vorbis(*key, vec![value.clone()]);
+    }
+    tag.write_to_path(path).map_err(failed)
+}
+
+/// See [`update_flac`]; for MP3 and AIFF files.
+pub fn update_id3(path: &Path, tags: &[(&str, String)]) -> Result<()> {
+    let failed = |e: id3::Error| tag_error(path, e);
+    let mut tag = id3::Tag::read_from_path(path).map_err(failed)?;
+    for (key, value) in tags {
+        tag.remove_extended_text(Some(key), None);
+        tag.add_frame(ExtendedText { description: (*key).into(), value: value.clone() });
+    }
+    tag.write_to_path(path, id3::Version::Id3v24).map_err(failed)
+}
+
+/// See [`update_flac`]; for .m4a files.
+pub fn update_mp4(path: &Path, tags: &[(&'static str, String)]) -> Result<()> {
+    let failed = |e: mp4ameta::Error| tag_error(path, e);
+    let mut tag = mp4ameta::Tag::read_from_path(path).map_err(failed)?;
+    for (key, value) in tags {
+        let ident = mp4ameta::FreeformIdent::new_static("com.apple.iTunes", key);
+        tag.set_data(ident, mp4ameta::Data::Utf8(value.clone()));
+    }
+    tag.write_to_path(path).map_err(failed)
+}
+
+fn tag_error(path: &Path, e: impl std::fmt::Display) -> Error {
+    Error::Encode(format!("cannot add tags to {}: {e}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +280,56 @@ mod tests {
         let artist_ids = tag.extended_texts().find(|t| t.description == "MusicBrainz Artist Id").unwrap();
         assert_eq!(artist_ids.value, "a\0b");
         assert!(tag.unique_file_identifiers().any(|u| u.identifier == b"rec"));
+    }
+
+    /// Writes a short file of each kind, adds a tag twice, and reads it back.
+    #[test]
+    fn tags_added_afterwards() {
+        let dir = std::env::temp_dir().join(format!("galette-tags-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio: Vec<u8> = (0..44_100u32 * 4).map(|i| (i % 251) as u8).collect();
+        let base = vec![("TITLE", "Song".to_string())];
+        let gain = |v: &str| vec![("REPLAYGAIN_TRACK_GAIN", format!("{v} dB"))];
+
+        let flac = dir.join("a.flac");
+        std::fs::write(&flac, crate::flac::encode(&audio, &base, None).unwrap()).unwrap();
+        update_flac(&flac, &gain("-1.00")).unwrap();
+        update_flac(&flac, &gain("-2.00")).unwrap();
+        let tag = metaflac::Tag::read_from_path(&flac).unwrap();
+        let values: Vec<&str> = tag.get_vorbis("REPLAYGAIN_TRACK_GAIN").unwrap().collect();
+        assert_eq!(values, ["-2.00 dB"]);
+        assert!(tag.get_vorbis("TITLE").is_some());
+
+        let mp3 = dir.join("a.mp3");
+        std::fs::write(&mp3, crate::mp3::encode(&audio, crate::mp3::Quality::V2, &id3(&base, None)).unwrap()).unwrap();
+        let aiff = dir.join("a.aiff");
+        let mut file = Vec::new();
+        let mut tag = Vec::new();
+        id3(&base, None).write_to(&mut tag, id3::Version::Id3v24).unwrap();
+        crate::aiff::write(&mut file, &audio, Some(&tag)).unwrap();
+        std::fs::write(&aiff, file).unwrap();
+        for path in [&mp3, &aiff] {
+            update_id3(path, &gain("-1.00")).unwrap();
+            update_id3(path, &gain("-2.00")).unwrap();
+            let tag = id3::Tag::read_from_path(path).unwrap();
+            let values: Vec<&str> =
+                tag.extended_texts().filter(|t| t.description == "REPLAYGAIN_TRACK_GAIN").map(|t| t.value.as_str()).collect();
+            assert_eq!(values, ["-2.00 dB"], "{}", path.display());
+            assert_eq!(tag.title(), Some("Song"));
+        }
+
+        let m4a = dir.join("a.m4a");
+        std::fs::write(&m4a, crate::alac::encode(&audio, &mp4(&base, None)).unwrap()).unwrap();
+        let before = std::fs::metadata(&m4a).unwrap().len();
+        update_mp4(&m4a, &gain("-1.00")).unwrap();
+        update_mp4(&m4a, &gain("-2.00")).unwrap();
+        let tag = mp4ameta::Tag::read_from_path(&m4a).unwrap();
+        let ident = mp4ameta::FreeformIdent::new_static("com.apple.iTunes", "REPLAYGAIN_TRACK_GAIN");
+        assert_eq!(tag.strings_of(&ident).collect::<Vec<_>>(), ["-2.00 dB"]);
+        assert_eq!(tag.title(), Some("Song"));
+        // The audio is still there.
+        assert!(std::fs::metadata(&m4a).unwrap().len() > before);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

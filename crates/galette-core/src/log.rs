@@ -28,6 +28,8 @@ pub struct RipLog<'a> {
     pub accuraterip_sets: Option<usize>,
     pub tracks: &'a [TrackLog],
     pub hidden_track: &'a HiddenTrack,
+    /// The album's ReplayGain and peak, for a whole disc.
+    pub replaygain_album: Option<(f64, f32)>,
 }
 
 /// Audio before track 1 (HTOA), in the TOC's gap between LBA 0 and track 1.
@@ -55,6 +57,8 @@ pub struct TrackLog {
     pub checksums: Checksums,
     pub verdict: Verdict,
     pub read: ReadReport,
+    /// ReplayGain of the track, in dB, if measured.
+    pub replaygain: Option<f64>,
 }
 
 /// Highest absolute sample value of CD audio, from 0 to 1.
@@ -158,6 +162,9 @@ impl RipLog<'_> {
                 }
             }
             line(format!("  Peak level         {:.1} %", t.peak * 100.0));
+            if let Some(gain) = t.replaygain {
+                line(format!("  ReplayGain         {}", crate::replaygain::format_gain(gain)));
+            }
             line(format!("  Copy CRC           {:08X}", t.crc));
             if t.number == 0 {
                 line("  Result             not verified (AccurateRip and the CTDB do not cover it)".to_string());
@@ -191,6 +198,9 @@ impl RipLog<'_> {
             }
         }
         line(ctdb_summary(self.ctdb));
+        if let Some((gain, peak)) = self.replaygain_album {
+            line(format!("ReplayGain: album {} (peak {:.1} %).", crate::replaygain::format_gain(gain), peak * 100.0));
+        }
         log
     }
 }
@@ -318,6 +328,7 @@ mod tests {
             checksums: Checksums { v1: 1, v2: 2 },
             verdict: Verdict::Accurate { version: 2, confidence: 7 },
             read: ReadReport { passes: 1, ..Default::default() },
+            replaygain: Some(-7.5),
         }
     }
 
@@ -345,6 +356,7 @@ mod tests {
             accuraterip_sets: Some(1),
             tracks: &tracks,
             hidden_track: &hidden,
+            replaygain_album: Some((-6.25, 1.0)),
         }
         .render();
         assert!(log.contains("    2 | 02:13.25 | 04:26.50 |        10000 |      29999  (pre-emphasis)"));
@@ -356,6 +368,8 @@ mod tests {
         assert!(section("02").contains("CTDB               accurately ripped (confidence 4 of 9)"));
         // The hidden track is not counted with the disc's tracks.
         assert!(log.contains("2 of 2 track(s) accurately ripped."));
+        assert!(section("02").contains("ReplayGain         -7.50 dB"));
+        assert!(log.contains("ReplayGain: album -6.25 dB (peak 100.0 %)."));
     }
 
     #[test]

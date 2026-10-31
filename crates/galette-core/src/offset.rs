@@ -13,8 +13,13 @@
 //! often shifted from one another, and the database holds them all under
 //! the same TOC (one disc tested matched at 17 offsets, the drive's being
 //! only the 7th most confirmed). Only another disc tells them apart: its
-//! pressings have no reason to be shifted the same way, so the offset that
-//! both discs match is the drive's. See [`among`].
+//! pressings have no reason to be shifted the same way. Some shifts do recur
+//! across discs, though (small multiples of 6 samples, from pressings or
+//! misconfigured rippers: Reload and Brand New Eyes both match at +6 and
+//! +12), but strongly on one disc only, whereas the drive's offset is well
+//! confirmed on every disc: each offset keeps its lowest confidence over the
+//! discs, and one far ahead of the others is the drive's. See [`among`] and
+//! [`decide`].
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -109,9 +114,34 @@ pub fn detect(
     Ok(if matches.is_empty() { Detection::NoMatch } else { Detection::Found(matches) })
 }
 
-/// The matches of a disc among the `candidates` that another disc left.
-pub fn among(matches: &[Match], candidates: &[i32]) -> Vec<Match> {
-    matches.iter().filter(|m| candidates.contains(&m.offset)).copied().collect()
+/// How much more confirmed than the others, on every disc, an offset must be
+/// to be taken as the drive's.
+const LEAD: u32 = 4;
+
+/// The offsets that both a disc's `matches` and the `candidates` other
+/// discs left match, each with its lowest confidence, most confirmed first.
+pub fn among(matches: &[Match], candidates: &[Match]) -> Vec<Match> {
+    let mut common: Vec<Match> = matches
+        .iter()
+        .filter_map(|m| {
+            let other = candidates.iter().find(|c| c.offset == m.offset)?;
+            Some(Match { offset: m.offset, confidence: m.confidence.min(other.confidence) })
+        })
+        .collect();
+    common.sort_by_key(|m| (std::cmp::Reverse(m.confidence), m.offset.abs()));
+    common
+}
+
+/// The drive's offset, if `matches` tell it: the only one, or, once several
+/// discs were combined by [`among`], one [`LEAD`] times more confirmed than
+/// the next. On a single disc, the most confirmed offset may well be another
+/// pressing's.
+pub fn decide(matches: &[Match], several_discs: bool) -> Option<Match> {
+    match matches {
+        [only] => Some(*only),
+        [best, next, ..] if several_discs && best.confidence >= LEAD * next.confidence => Some(*best),
+        _ => None,
+    }
 }
 
 /// The distinct offsets of the drives in AccurateRip's database, where v2
@@ -225,6 +255,21 @@ mod tests {
         let found = detect_with(48, &pressings(true), &[6, 48, 102]);
         assert_eq!(found, Detection::Found(vec![Match { offset: 48, confidence: 21 }]));
         assert_eq!(detect_with(48, &pressings(true), &[6]), Detection::NoMatch);
+    }
+
+    #[test]
+    fn several_discs_tell_the_drive_offset() {
+        let m = |offset, confidence| Match { offset, confidence };
+        // What Reload and Brand New Eyes matched with an ASUS (+6).
+        let reload = [m(673, 200), m(1359, 200), m(6, 22), m(12, 2), m(-12, 2)];
+        let paramore = [m(12, 200), m(0, 160), m(6, 36), m(1158, 3)];
+        assert_eq!(decide(&reload, false), None);
+        let both = among(&paramore, &reload);
+        assert_eq!(both, [m(6, 22), m(12, 2)]);
+        assert_eq!(decide(&both, true), Some(m(6, 22)));
+        // Too close to call: a third disc is needed.
+        assert_eq!(decide(&[m(6, 22), m(12, 10)], true), None);
+        assert_eq!(decide(&[m(48, 3)], false), Some(m(48, 3)));
     }
 
     #[test]

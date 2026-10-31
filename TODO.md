@@ -10,6 +10,11 @@ testée, et on la raye une fois vérifiée.
 
 ### Linux (Debian)
 
+- [ ] ReplayGain (nouveau) : après un rip du disque entier, les fichiers ont
+  les tags REPLAYGAIN_TRACK_* et REPLAYGAIN_ALBUM_* (un lecteur comme
+  foobar2000 ou VLC les lit) ; le log a une ligne « ReplayGain » par piste et
+  une pour l'album. Essayer FLAC, MP3, ALAC/AAC et AIFF ; la case des
+  réglages doit les désactiver.
 - [ ] Recherche du décalage (nouveau) : Réglages → Lecture → « Détecter avec
   ce disque » (ou `galette offset`), avec un disque connu d'AccurateRip.
   Si plusieurs décalages sont possibles, recommencer avec un autre disque :
@@ -50,10 +55,14 @@ testée, et on la raye une fois vérifiée.
 
 ### macOS
 
-- [x] Recherche du décalage : `galette offset` avec *Reload*, qui existe en
-  pressages décalés (17 décalages possibles, +6 parmi eux) ; `--among`
-  restreint bien les candidats. Reste à essayer dans la fenêtre, et à
-  confirmer avec un second disque.
+- [ ] ReplayGain (nouveau) : `galette rip --tracks 1,2` en FLAC testé avec
+  *Reload* (−10,78 et −10,96 dB, fichiers intacts). Reste : disque entier
+  (gain d'album), autres formats, case des réglages.
+- [x] Recherche du décalage : *Reload* (17 décalages possibles) puis
+  *Brand New Eyes* (Paramore) donnent +6, en ligne de commande. Dans la
+  fenêtre, le premier disque demande bien un second disque ; reste à faire
+  la détection avec le second disque dans la fenêtre (corrigé depuis : il
+  restait +6 et +12).
 - [x] Test du cache : `galette cache` avec l'ASUS (122 ms depuis le disque,
   3,4 ms en relecture ; 2 Mio lus ailleurs le vident). Reste à essayer dans
   la fenêtre.
@@ -82,6 +91,11 @@ testée, et on la raye une fois vérifiée.
 
 ### Windows
 
+- [ ] ReplayGain (nouveau) : après un rip du disque entier, les fichiers ont
+  les tags REPLAYGAIN_TRACK_* et REPLAYGAIN_ALBUM_* (un lecteur comme
+  foobar2000 ou VLC les lit) ; le log a une ligne « ReplayGain » par piste et
+  une pour l'album. Essayer FLAC, MP3, ALAC/AAC et AIFF ; la case des
+  réglages doit les désactiver.
 - [ ] Recherche du décalage (nouveau) : Réglages → Lecture → « Détecter avec
   ce disque » (ou `galette offset`), avec un disque connu d'AccurateRip.
   Si plusieurs décalages sont possibles, recommencer avec un autre disque :
