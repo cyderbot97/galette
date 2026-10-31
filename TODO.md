@@ -58,11 +58,8 @@ testée, et on la raye une fois vérifiée.
 - [ ] ReplayGain (nouveau) : `galette rip --tracks 1,2` en FLAC testé avec
   *Reload* (−10,78 et −10,96 dB, fichiers intacts). Reste : disque entier
   (gain d'album), autres formats, case des réglages.
-- [x] Recherche du décalage : *Reload* (17 décalages possibles) puis
-  *Brand New Eyes* (Paramore) donnent +6, en ligne de commande. Dans la
-  fenêtre, le premier disque demande bien un second disque ; reste à faire
-  la détection avec le second disque dans la fenêtre (corrigé depuis : il
-  restait +6 et +12).
+- [x] Recherche du décalage : *Brand New Eyes* (Paramore) puis *Reload*
+  donnent +6, dans la fenêtre comme en ligne de commande.
 - [x] Test du cache : `galette cache` avec l'ASUS (122 ms depuis le disque,
   3,4 ms en relecture ; 2 Mio lus ailleurs le vident). Reste à essayer dans
   la fenêtre.
