@@ -102,8 +102,11 @@ Par défaut, chaque piste est lue une fois en demandant au lecteur ses pointeurs
 correspond à AccurateRip, la piste est prouvée correcte. Sinon elle est relue
 entièrement après avoir vidé le cache du lecteur, et les deux lectures sont
 comparées. Chaque secteur différent ou signalé par C2 est relu (jusqu'à 20 fois,
-cache vidé à chaque fois) jusqu'à obtenir 3 lectures identiques sans erreur C2.
-Les secteurs qui n'y parviennent pas sont notés comme suspects dans le log.
+cache vidé à chaque fois) jusqu'à obtenir 3 lectures identiques sans erreur C2,
+ou jusqu'à ce que la piste corresponde à AccurateRip. Un secteur qui n'a jamais
+été lu sans erreur après 5 tours est abandonné : sur un disque rayé, chaque
+lecture d'un secteur abîmé peut prendre plusieurs secondes. Les secteurs qui
+n'y parviennent pas sont notés comme suspects dans le log.
 
 ## Organisation
 
@@ -165,4 +168,5 @@ une commande SCSI au lecteur.
 - [x] AAC (macOS, encodeur d'Apple, 256 kbit/s VBR)
 - [x] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), installateur NSIS
 - [x] CD-Text : titres lus sur le disque quand MusicBrainz ne le connaît pas
-- [ ] CTDB (vérification et réparation), HTOA, pré-accentuation
+- [x] Vérification CTDB (CUETools Database), en plus d'AccurateRip
+- [ ] Réparation CTDB, HTOA, pré-accentuation

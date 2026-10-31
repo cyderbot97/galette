@@ -11,6 +11,7 @@ pub mod accuraterip;
 pub mod aiff;
 pub mod alac;
 pub mod cdtext;
+pub mod ctdb;
 pub mod cue;
 pub mod drive;
 pub mod error;

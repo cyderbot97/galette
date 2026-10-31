@@ -10,6 +10,14 @@ testée, et on la raye une fois vérifiée.
 
 ### Linux (Debian)
 
+- [ ] Disque abîmé en mode sécurisé (nouveau) : les relectures abandonnent un
+  secteur jamais lu sans erreur après 5 tours ; le rip doit finir en un temps
+  raisonnable et le log noter les secteurs suspects ou illisibles. En mode
+  rapide, les secteurs avec erreurs C2 doivent aussi être notés suspects.
+- [ ] CTDB (nouveau) : après un rip du disque entier, le message final et le
+  log disent ce qu'en pense le CTDB (« disque confirmé (n sur m) ») ; une piste
+  absente d'AccurateRip mais trouvée dans le CTDB affiche « CTDB ✓ ». Essayer
+  aussi un disque absent du CTDB et un rip de quelques pistes seulement.
 - [ ] Langue : passer en anglais dans Réglages → Apparence → Langue, faire un
   rip, revenir en français (nouveau).
 - [ ] Message sans lecteur : débrancher le lecteur, la fenêtre doit dire
@@ -25,6 +33,12 @@ testée, et on la raye une fois vérifiée.
 
 ### macOS
 
+- [x] Disque abîmé en mode sécurisé : testé avec *Reload* (Metallica), 12/13
+  pistes confirmées, la piste rayée finit avec ses secteurs suspects.
+- [ ] Mode rapide sur disque abîmé (nouveau) : les secteurs avec erreurs C2
+  doivent être notés suspects dans le log.
+- [x] CTDB, disque entier et confirmation piste par piste.
+- [ ] CTDB : un disque absent du CTDB et un rip de quelques pistes seulement.
 - [ ] Message sans lecteur : débrancher le lecteur, la fenêtre doit dire
   « Aucun lecteur détecté. Branchez un lecteur CD. » (nouveau).
 - [ ] Bouton Arrêter pendant un rip (corrigé, mais jamais confirmé dans la
@@ -35,6 +49,14 @@ testée, et on la raye une fois vérifiée.
 
 ### Windows
 
+- [ ] Disque abîmé en mode sécurisé (nouveau) : les relectures abandonnent un
+  secteur jamais lu sans erreur après 5 tours ; le rip doit finir en un temps
+  raisonnable et le log noter les secteurs suspects ou illisibles. En mode
+  rapide, les secteurs avec erreurs C2 doivent aussi être notés suspects.
+- [ ] CTDB (nouveau) : après un rip du disque entier, le message final et le
+  log disent ce qu'en pense le CTDB (« disque confirmé (n sur m) ») ; une piste
+  absente d'AccurateRip mais trouvée dans le CTDB affiche « CTDB ✓ ». Essayer
+  aussi un disque absent du CTDB et un rip de quelques pistes seulement.
 - [ ] Dans l'application installée : bouton Arrêter pendant un rip,
   éjection, « Ouvrir le dossier », désinstallation.
 - [ ] Un lecteur autre que l'ASUS.
@@ -51,6 +73,6 @@ testée, et on la raye une fois vérifiée.
 
 ## Plus tard
 
-- [ ] CTDB : vérification puis réparation des rips (protocole déjà étudié,
-  commencer par la vérification seule).
+- [ ] CTDB : réparation des rips à partir des données de parité (la
+  vérification est faite).
 - [ ] HTOA (piste cachée avant la piste 1), pré-accentuation.

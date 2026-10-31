@@ -345,8 +345,25 @@ listen("rip", ({ payload: event }) => {
     case "finished": {
       ripping = false;
       lastAlbumDir = event.albumDir;
-      const perfect = event.verified ? event.accurate === event.total : event.clean === event.total;
-      setMessage(event.verified ? "rip.doneVerified" : "rip.doneUnverified", event, perfect ? "good" : "bad", true);
+      const ctdb = event.ctdb;
+      // A track AccurateRip did not confirm may still be in the CTDB.
+      for (const [number, confidence] of ctdb.tracks) {
+        const state = row(number)?.querySelector(".state");
+        if (confidence > 0 && state && !state.classList.contains("accurate")) {
+          setStatus(row(number), "track.ctdb", { confidence }, "accurate");
+        }
+      }
+      const arPerfect = event.verified ? event.accurate === event.total : event.clean === event.total;
+      const perfect = arPerfect || ctdb.disc > 0;
+      const found = ctdb.tracks.filter(([, confidence]) => confidence > 0).length;
+      const ctdbText =
+        ctdb.status !== "verified"
+          ? { key: `ctdb.${ctdb.status}` }
+          : ctdb.disc > 0
+            ? { key: "ctdb.disc", params: { confidence: ctdb.disc, total: ctdb.total } }
+            : { key: "ctdb.tracks", params: { found, count: ctdb.tracks.length } };
+      const summary = { key: event.verified ? "rip.doneVerified" : "rip.doneUnverified", params: event };
+      setMessage("rip.doneWithCtdb", { summary, ctdb: ctdbText }, perfect ? "good" : "bad", true);
       break;
     }
     case "cancelled":

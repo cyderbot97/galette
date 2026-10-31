@@ -4,8 +4,10 @@
 //! AccurateRip is done: it is proven correct. Otherwise it is read a second
 //! time and both reads are compared; every sector that differs or had C2
 //! errors is re-read, emptying the drive's cache first, until
-//! [`REQUIRED_MATCHES`] error-free reads agree. Sectors that never reach
-//! that agreement are reported as suspicious.
+//! [`REQUIRED_MATCHES`] error-free reads agree, or the track matches
+//! AccurateRip. Sectors that never reach that agreement are reported as
+//! suspicious; those never read without errors are given up after
+//! [`GIVE_UP_ROUNDS`], since a damaged sector can take seconds per read.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -27,6 +29,8 @@ const ATTEMPTS: usize = 3;
 pub const MAX_REREADS: u32 = 20;
 /// Identical error-free reads needed to trust a sector that read differently.
 pub const REQUIRED_MATCHES: u32 = 3;
+/// Rounds after which a sector never read without errors is given up.
+pub const GIVE_UP_ROUNDS: u32 = 5;
 /// Cache size assumed at least, since drives do not always report it.
 const MIN_CACHE_KIB: u32 = 2048;
 
@@ -110,18 +114,26 @@ pub fn read_track(
     progress: &mut dyn FnMut(Progress),
 ) -> Result<TrackRead> {
     let span = Span::new(toc, index, options.offset);
-    let mut reader = Reader { drive, c2: options.c2, cancel: options.cancel };
+    let mut reader = Reader { drive, c2: options.c2, cancel: options.cancel, attempts: ATTEMPTS };
 
     let first = reader.read(span.sectors.clone(), &mut |f| progress(Progress::Reading(f)))?;
     let audio = span.crop(&first.data);
     let first_clean = first.flags.iter().all(|f| *f == Flag::Good);
     if options.mode == Mode::Burst || (first_clean && is_accurate(&audio)) {
-        let report = ReadReport {
+        // Sectors the drive could not correct are doubtful, unless
+        // AccurateRip proves the track right.
+        let mut report = ReadReport {
             passes: 1,
             c2_sectors: first.flags.iter().filter(|f| **f == Flag::C2).count() as u32,
+            suspicious: first.lbas(Flag::C2),
             unreadable: first.lbas(Flag::Failed),
             ..Default::default()
         };
+        if !first_clean && is_accurate(&audio) {
+            report.cleared_by_accuraterip = report.suspicious.len() + report.unreadable.len();
+            report.suspicious.clear();
+            report.unreadable.clear();
+        }
         return Ok(TrackRead { audio, report });
     }
 
@@ -146,6 +158,8 @@ pub fn read_track(
 
     let mut pending: Vec<usize> = votes.iter().filter(|(_, v)| !v.confirmed()).map(|(i, _)| *i).collect();
     pending.sort_unstable();
+    // Every round is already a new attempt at the sectors the drive rejects.
+    reader.attempts = 1;
     for attempt in 1..=MAX_REREADS {
         if pending.is_empty() {
             break;
@@ -160,24 +174,19 @@ pub fn read_track(
                 report.rereads += 1;
             }
         }
-        pending.retain(|i| !votes[i].confirmed());
+        pending.retain(|i| !votes[i].confirmed() && !(attempt >= GIVE_UP_ROUNDS && votes[i].hopeless()));
+        if !pending.is_empty() && is_accurate(&span.crop(&merge(&first.data, &votes))) {
+            break;
+        }
     }
 
-    let mut data = first.data;
+    let data = merge(&first.data, &votes);
     for (&i, sector_votes) in &votes {
         let lba = span.sectors.start + i as u32;
-        let target = &mut data[i * SECTOR_BYTES..(i + 1) * SECTOR_BYTES];
-        match sector_votes.best() {
-            Some(best) => {
-                target.copy_from_slice(best);
-                if !sector_votes.confirmed() {
-                    report.suspicious.push(lba);
-                }
-            }
-            None => {
-                target.fill(0);
-                report.unreadable.push(lba);
-            }
+        if sector_votes.best().is_none() {
+            report.unreadable.push(lba);
+        } else if !sector_votes.confirmed() {
+            report.suspicious.push(lba);
         }
     }
     report.suspicious.sort_unstable();
@@ -189,6 +198,20 @@ pub fn read_track(
         report.unreadable.clear();
     }
     Ok(TrackRead { audio, report })
+}
+
+/// The first read with each doubtful sector replaced by its best version,
+/// or silence if it was never read.
+fn merge(first: &[u8], votes: &HashMap<usize, Votes>) -> Vec<u8> {
+    let mut data = first.to_vec();
+    for (&i, sector_votes) in votes {
+        let target = &mut data[i * SECTOR_BYTES..(i + 1) * SECTOR_BYTES];
+        match sector_votes.best() {
+            Some(best) => target.copy_from_slice(best),
+            None => target.fill(0),
+        }
+    }
+    data
 }
 
 /// Where a track's audio lies on the disc, once the read offset is applied.
@@ -254,6 +277,8 @@ struct Reader<'a> {
     drive: &'a mut Drive,
     c2: bool,
     cancel: Option<&'a AtomicBool>,
+    /// Attempts at a sector the drive rejects, in one read.
+    attempts: usize,
 }
 
 impl Reader<'_> {
@@ -285,7 +310,7 @@ impl Reader<'_> {
 
     /// Tries a few times to read one sector; `false` if the disc refuses.
     fn read_sector(&mut self, lba: u32, pass: &mut Pass, i: usize) -> Result<bool> {
-        for _ in 0..ATTEMPTS {
+        for _ in 0..self.attempts {
             // A damaged sector can take many seconds per attempt.
             self.check_cancel()?;
             match self.read_chunk(lba, 1, pass, i) {
@@ -308,7 +333,7 @@ impl Reader<'_> {
         self.drive.read_audio_c2(lba, n, &mut buf)?;
         for (k, raw) in buf.chunks_exact(stride).enumerate() {
             data[k * SECTOR_BYTES..(k + 1) * SECTOR_BYTES].copy_from_slice(&raw[..SECTOR_BYTES]);
-            let has_errors = raw[SECTOR_BYTES..].iter().any(|&b| b != 0);
+            let has_errors = raw[SECTOR_BYTES..SECTOR_BYTES + mmc::C2_BITS_LEN].iter().any(|&b| b != 0);
             pass.flags[i + k] = if has_errors { Flag::C2 } else { Flag::Good };
         }
         Ok(())
@@ -360,6 +385,11 @@ impl Votes {
 
     fn confirmed(&self) -> bool {
         self.versions.iter().any(|(_, clean, _)| *clean >= REQUIRED_MATCHES)
+    }
+
+    /// Never read without errors, so re-reading it is unlikely to help.
+    fn hopeless(&self) -> bool {
+        self.versions.iter().all(|(_, clean, _)| *clean == 0)
     }
 
     /// The most often read version, error-free reads first.
@@ -424,6 +454,10 @@ mod tests {
                     *sample = (sector * 588 + i as u32 + 1).to_le_bytes();
                 }
                 raw[SECTOR_BYTES..].fill(0);
+                // Some drives leave garbage in the pad byte.
+                if let Some(pad) = raw.get_mut(SECTOR_BYTES + mmc::C2_LEN - 1) {
+                    *pad = 0x20;
+                }
                 match self.damage.get(&sector) {
                     Some(Damage::Unreadable) => {
                         return Err(Error::Scsi(ScsiError { opcode: cdb[0], sense_key: 3, asc: 0x11, ascq: 5 }));
@@ -514,8 +548,9 @@ mod tests {
         let read = rip(disc, 1, 0, Mode::Secure, false);
         assert_eq!(read.report.suspicious, [60]);
         assert_eq!(read.report.unreadable, [80]);
-        // Both sectors are re-read in every round.
-        assert_eq!(read.report.rereads, 2 * MAX_REREADS);
+        // The unstable sector is re-read in every round, the unreadable one
+        // is given up.
+        assert_eq!(read.report.rereads, MAX_REREADS + GIVE_UP_ROUNDS);
         let audio = samples(&read.audio);
         assert_eq!(&audio[30 * 588..31 * 588], &[0; 588]);
         assert_eq!(audio[31 * 588], 81 * 588 + 1);
@@ -534,7 +569,8 @@ mod tests {
         let read = read_track(&mut drive, &toc, 1, options, &mut is_accurate, &mut |_| {}).unwrap();
         assert!(read.report.is_clean());
         assert_eq!(read.report.cleared_by_accuraterip, 1);
-        assert_eq!(read.report.rereads, MAX_REREADS);
+        // AccurateRip accepts the track after the first round.
+        assert_eq!(read.report.rereads, 1);
     }
 
     #[test]
@@ -544,6 +580,20 @@ mod tests {
         let read = rip(disc, 1, 0, Mode::Burst, false);
         assert_eq!(read.report.unreadable, [80]);
         assert_eq!(read.report.passes, 1);
+    }
+
+    #[test]
+    fn burst_mode_reports_c2_sectors() {
+        let mut disc = FakeDisc::default();
+        disc.damage.insert(60, Damage::FlaggedButRight);
+        let read = rip(disc, 1, 0, Mode::Burst, false);
+        assert_eq!((read.report.c2_sectors, read.report.suspicious.as_slice()), (1, &[60][..]));
+
+        let mut disc = FakeDisc::default();
+        disc.damage.insert(60, Damage::FlaggedButRight);
+        let read = rip(disc, 1, 0, Mode::Burst, true);
+        assert!(read.report.is_clean());
+        assert_eq!(read.report.cleared_by_accuraterip, 1);
     }
 
     #[test]

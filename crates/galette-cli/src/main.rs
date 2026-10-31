@@ -328,6 +328,7 @@ fn rip(args: &RipArgs) -> Result<()> {
             outcome.tracks.len()
         );
     }
+    println!("{}", log::ctdb_summary(&outcome.ctdb));
     println!("Log      {}", outcome.log_path.display());
     Ok(())
 }

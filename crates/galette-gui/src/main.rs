@@ -24,7 +24,7 @@ use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
-use galette_core::{ids, mp3, toc};
+use galette_core::{ctdb, ids, log, mp3, toc};
 
 /// Least time between two reading progress events sent to the window.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -311,9 +311,38 @@ enum RipEvent {
     },
     /// `status`: "accurate" (with `confidence`), "mismatch", "clean" or "errors".
     TrackDone { number: u8, status: &'static str, confidence: Option<u32>, read: ReadView },
-    Finished { album_dir: PathBuf, accurate: usize, clean: usize, total: usize, verified: bool },
+    Finished { album_dir: PathBuf, accurate: usize, clean: usize, total: usize, verified: bool, ctdb: CtdbView },
     Failed { error: Message },
     Cancelled,
+}
+
+/// The CUETools Database's verdict. `status`: "unavailable", "notFound",
+/// "partialRip" or "verified"; then the confirmations matching the whole
+/// disc, of all `total`, and for each track (by number).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CtdbView {
+    status: &'static str,
+    disc: u32,
+    total: u32,
+    tracks: Vec<(u8, u32)>,
+}
+
+impl CtdbView {
+    fn new(status: &ctdb::Status, tracks: &[log::TrackLog]) -> Self {
+        let view = |status| CtdbView { status, disc: 0, total: 0, tracks: Vec::new() };
+        match status {
+            ctdb::Status::Unavailable => view("unavailable"),
+            ctdb::Status::NotFound => view("notFound"),
+            ctdb::Status::PartialRip => view("partialRip"),
+            ctdb::Status::Verified(v) => CtdbView {
+                status: "verified",
+                disc: v.disc,
+                total: v.total,
+                tracks: tracks.iter().map(|t| t.number).zip(v.tracks.iter().copied()).collect(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -396,6 +425,7 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
                 clean: outcome.tracks.iter().filter(|t| t.read.is_clean()).count(),
                 total: outcome.tracks.len(),
                 verified: disc.accuraterip.is_some(),
+                ctdb: CtdbView::new(&outcome.ctdb, &outcome.tracks),
                 album_dir: outcome.album_dir,
             },
             Err(galette_core::Error::Cancelled) => RipEvent::Cancelled,

@@ -79,6 +79,9 @@ pub fn read_cd_cdb(lba: u32, count: u32) -> [u8; 12] {
 /// some USB bridges (Initio) cannot transfer several at a time: they stop
 /// mid-transfer and stop responding. 2648 bytes is a multiple of 8.
 pub const C2_LEN: usize = 296;
+/// The C2 error bits themselves, one per byte of audio. The pad byte
+/// after them is not always zero, so only these say whether a sector is bad.
+pub const C2_BITS_LEN: usize = 294;
 
 /// READ CD of `count` CD-DA sectors, each followed by its C2 error information.
 pub fn read_cd_c2_cdb(lba: u32, count: u32) -> [u8; 12] {

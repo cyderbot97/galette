@@ -5,6 +5,7 @@ use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::accuraterip::{Checksums, Verdict};
+use crate::ctdb::Status;
 use crate::drive::DriveInfo;
 use crate::ids::{self, AccurateRipId};
 use crate::metadata::Release;
@@ -22,6 +23,7 @@ pub struct RipLog<'a> {
     pub release: Option<&'a Release>,
     pub mcn: Option<&'a str>,
     pub cd_text: Option<&'a crate::cdtext::CdText>,
+    pub ctdb: &'a Status,
     /// Number of checksum sets in AccurateRip, `None` if the disc is unknown.
     pub accuraterip_sets: Option<usize>,
     pub tracks: &'a [TrackLog],
@@ -127,6 +129,10 @@ impl RipLog<'_> {
             line(format!("  AccurateRip v1     {:08X}", t.checksums.v1));
             line(format!("  AccurateRip v2     {:08X}", t.checksums.v2));
             line(format!("  Result             {}", verdict_text(t.verdict)));
+            if let Status::Verified(v) = self.ctdb {
+                let confidence = self.tracks.iter().position(|x| x.number == t.number).map_or(0, |i| v.tracks[i]);
+                line(format!("  CTDB               {}", ctdb_text(confidence, v.total)));
+            }
             line(String::new());
         }
 
@@ -144,7 +150,31 @@ impl RipLog<'_> {
                 line(format!("{accurate} of {} track(s) accurately ripped.", self.tracks.len()));
             }
         }
+        line(ctdb_summary(self.ctdb));
         log
+    }
+}
+
+/// One line on what the CUETools Database says of the rip.
+pub fn ctdb_summary(status: &Status) -> String {
+    match status {
+        Status::Unavailable => "CTDB: the database could not be reached.".to_string(),
+        Status::NotFound => "CTDB: the disc is not in the database.".to_string(),
+        Status::PartialRip => "CTDB: only whole-disc rips are verified.".to_string(),
+        Status::Verified(v) if v.disc > 0 => format!("CTDB: disc accurately ripped (confidence {} of {}).", v.disc, v.total),
+        Status::Verified(v) => {
+            let found = v.tracks.iter().filter(|&&c| c > 0).count();
+            format!("CTDB: {found} of {} track(s) found in the database.", v.tracks.len())
+        }
+    }
+}
+
+/// A track's CTDB result: how many confirmations of the `total` it matches.
+fn ctdb_text(confidence: u32, total: u32) -> String {
+    if confidence > 0 {
+        format!("accurately ripped (confidence {confidence} of {total})")
+    } else {
+        format!("not found ({total} submission(s) for this disc)")
     }
 }
 

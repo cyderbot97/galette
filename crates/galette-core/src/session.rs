@@ -23,7 +23,7 @@ use crate::toc::Toc;
 #[cfg(target_os = "macos")]
 use crate::aac;
 use crate::cdtext::CdText;
-use crate::{Error, Result, aiff, alac, cue, flac, gaps, log, mp3, tags, wav};
+use crate::{Error, Result, aiff, alac, ctdb, cue, flac, gaps, log, mp3, tags, wav};
 
 /// What we know about the disc in the drive.
 #[derive(Clone)]
@@ -39,6 +39,8 @@ pub struct Disc {
     pub offset: Option<i32>,
     /// Titles stored on the disc, if any (and if the drive reads them).
     pub cd_text: Option<CdText>,
+    /// The disc in the CUETools Database, filled by [`Disc::lookup`].
+    pub ctdb: ctdb::Lookup,
 }
 
 impl Disc {
@@ -51,6 +53,7 @@ impl Disc {
             releases: Vec::new(),
             accuraterip: None,
             offset: None,
+            ctdb: ctdb::Lookup::Unavailable,
             cd_text: match drive.read_cd_text() {
                 Ok(text) => text,
                 Err(e) if e.is_drive_failure() => return Err(e),
@@ -74,6 +77,12 @@ impl Disc {
         let offsets = accuraterip::fetch_drive_offsets()?;
         self.offset = accuraterip::find_drive_offset(&offsets, &self.drive.vendor, &self.drive.product)
             .map(|o| o.offset);
+        // A second opinion: its absence must not stop the rip.
+        self.ctdb = match ctdb::lookup(&self.toc) {
+            Ok(Some(entries)) => ctdb::Lookup::Found(entries),
+            Ok(None) => ctdb::Lookup::NotFound,
+            Err(_) => ctdb::Lookup::Unavailable,
+        };
         Ok(())
     }
 
@@ -219,6 +228,7 @@ pub struct Outcome {
     pub tracks: Vec<log::TrackLog>,
     pub log_path: PathBuf,
     pub cue_path: Option<PathBuf>,
+    pub ctdb: ctdb::Status,
 }
 
 impl Outcome {
@@ -283,6 +293,9 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     };
     let mut track_logs = Vec::new();
     let mut cue_tracks = Vec::new();
+    // CTDB checks the whole disc at once, from CRCs gathered track by track.
+    let whole_disc = toc.audio_tracks().all(|t| settings.tracks.is_empty() || settings.tracks.contains(&t.number));
+    let mut ctdb_crcs = (whole_disc && matches!(disc.ctdb, ctdb::Lookup::Found(_))).then(|| ctdb::Crcs::new(toc));
     for (position, (index, track)) in toc.tracks.iter().enumerate().filter(|(_, t)| t.is_audio).enumerate() {
         if !settings.tracks.is_empty() && !settings.tracks.contains(&track.number) {
             continue;
@@ -304,6 +317,9 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
             on_event(Event::TrackProgress { number, progress })
         })?;
         let audio = read.audio;
+        if let Some(crcs) = &mut ctdb_crcs {
+            crcs.add(&audio);
+        }
 
         let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
         let path = album_dir.join(&file_name);
@@ -336,6 +352,13 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         cue_tracks.push(cue::TrackFile { index, file_name, pregap: subcode.pregaps[index], isrc });
     }
 
+    let ctdb = match (&disc.ctdb, ctdb_crcs.and_then(ctdb::Crcs::finish)) {
+        (ctdb::Lookup::Unavailable, _) => ctdb::Status::Unavailable,
+        (ctdb::Lookup::NotFound, _) => ctdb::Status::NotFound,
+        (ctdb::Lookup::Found(entries), Some(crcs)) => ctdb::Status::Verified(ctdb::verify(entries, toc, &crcs)),
+        (ctdb::Lookup::Found(_), None) => ctdb::Status::PartialRip,
+    };
+
     let read_mode = read_mode_text(settings.mode, settings.c2 && disc.c2());
     let rip_log = log::RipLog {
         date: SystemTime::now(),
@@ -347,6 +370,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         release,
         mcn: subcode.mcn.as_deref(),
         cd_text: disc.cd_text.as_ref(),
+        ctdb: &ctdb,
         accuraterip_sets: disc.accuraterip.as_ref().map(Vec::len),
         tracks: &track_logs,
     };
@@ -370,7 +394,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         None
     };
 
-    Ok(Outcome { album_dir, tracks: track_logs, log_path, cue_path })
+    Ok(Outcome { album_dir, tracks: track_logs, log_path, cue_path, ctdb })
 }
 
 /// A track's file in the chosen format, from its audio and Vorbis comments.
