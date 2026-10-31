@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "galette-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "galette-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "alac",
  "alac-encoder",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "galette-gui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "galette-core",

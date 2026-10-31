@@ -50,7 +50,7 @@ de macOS) : d'où le dossier de compilation ailleurs.
 
 ## Installer (Windows)
 
-Lancer `Galette_0.4.0_x64-setup.exe` (Windows 10 ou 11, 64 bits). Les droits
+Lancer `Galette_0.5.0_x64-setup.exe` (Windows 10 ou 11, 64 bits). Les droits
 administrateur ne sont pas nécessaires pour ripper.
 L'installateur n'est pas signé par un certificat : Windows SmartScreen affiche
 « Windows a protégé votre ordinateur ». Cliquer sur « Informations complémentaires »,
