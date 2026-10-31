@@ -90,6 +90,8 @@ cargo run --release -p galette-cli -- rip -o ~/Musique --format alac   # Apple L
 cargo run --release -p galette-cli -- rip -o ~/Musique --format aac    # macOS : AAC 256 kbit/s (.m4a)
 cargo run --release -p galette-cli -- rip -o ~/Musique --mode burst  # une seule lecture
 cargo run --release -p galette-cli -- rip --folder "{albumartist}/{year} - {album}" --name "{track} {title}"
+cargo run --release -p galette-cli -- offset   # trouve le décalage du lecteur (disque connu d'AccurateRip)
+cargo run --release -p galette-cli -- cache    # vérifie que les relectures lisent vraiment le disque
 # Sans lecteur, à partir d'une TOC au format MusicBrainz :
 cargo run -p galette-cli -- info --toc "1 12 242387 150 21636 50551 70783 90795 113395 133171 142126 159578 181123 198419 218045"
 cargo test
@@ -108,6 +110,32 @@ ou jusqu'à ce que la piste corresponde à AccurateRip. Un secteur qui n'a jamai
 lecture d'un secteur abîmé peut prendre plusieurs secondes. Les secteurs qui
 n'y parviennent pas sont notés comme suspects dans le log.
 
+Comparer deux lectures ne prouve rien si la seconde sort du cache du lecteur :
+avant chaque relecture, Galette lit donc ailleurs sur le disque de quoi le
+vider (2 Mio au moins). Le bouton « Tester le cache du lecteur » des réglages
+(ou `galette cache`) mesure le cache au chronomètre (une relecture servie par
+le cache est des dizaines de fois plus rapide) et cherche combien il faut lire
+pour le vider ; le résultat est retenu pour les rips suivants.
+
+## Décalage du lecteur
+
+Chaque modèle de lecteur lit l'audio décalé de quelques échantillons. Galette
+prend ce décalage dans la base d'AccurateRip ; pour un lecteur qui n'y est pas,
+« Détecter avec ce disque » (ou `galette offset`) lit deux pistes d'un disque
+connu d'AccurateRip et cherche le décalage, à ±3000 échantillons près, auquel
+elles correspondent à la base. Un disque pressé plusieurs fois peut
+correspondre à plusieurs décalages (les pressages sont souvent décalés entre
+eux) : il faut alors un second disque, et seul le décalage commun aux deux est
+gardé.
+
+## Piste cachée et pré-accentuation
+
+L'audio placé avant la piste 1 (HTOA, « hidden track one audio ») est rippé en
+piste 00, sauf s'il n'est que du silence ; le fichier cue le place avant la
+piste 1, comme sur le disque. Les pistes enregistrées avec pré-accentuation
+(certains CD des années 80) sont gardées telles quelles, signalées dans le
+cue (`FLAGS PRE`) et le log : c'est au lecteur audio de corriger.
+
 ## Organisation
 
 ```
@@ -125,6 +153,8 @@ crates/
     src/aiff.rs        écriture des fichiers AIFF
     src/tags.rs        tags au format de MusicBrainz Picard (Vorbis, ID3v2.4, iTunes)
     src/gaps.rs        détection des pré-gaps par le sous-canal Q
+    src/offset.rs      recherche du décalage du lecteur avec un disque connu d'AccurateRip
+    src/cache.rs       mesure du cache du lecteur
     src/cue.rs         fichier .cue (un fichier par piste, pré-gaps en fin de piste précédente)
     src/log.rs         log de rip
     src/wav.rs         écriture des fichiers WAV
@@ -171,4 +201,5 @@ une commande SCSI au lecteur.
 - [x] Vérification CTDB (CUETools Database), en plus d'AccurateRip
 - [x] Réparation CTDB : les pistes abîmées sont corrigées avec les données de
   parité de la base, aidées par les erreurs C2 signalées par le lecteur
-- [ ] HTOA, pré-accentuation
+- [x] Piste cachée avant la piste 1 (HTOA), pré-accentuation signalée
+- [x] Recherche du décalage d'un lecteur inconnu, test du cache du lecteur

@@ -117,6 +117,8 @@ struct MbMedium {
     discs: Vec<MbDisc>,
     #[serde(default)]
     tracks: Vec<MbTrack>,
+    /// The hidden track before track 1, numbered 0, if the medium has one.
+    pregap: Option<MbTrack>,
 }
 
 #[derive(Deserialize)]
@@ -162,8 +164,9 @@ impl MbRelease {
         let artist = credit_name(&self.artist_credit);
         let artist_ids = credit_ids(&self.artist_credit);
         let tracks = medium
-            .tracks
+            .pregap
             .iter()
+            .chain(&medium.tracks)
             .map(|t| {
                 let credits = if t.artist_credit.is_empty() { &self.artist_credit } else { &t.artist_credit };
                 TrackInfo {

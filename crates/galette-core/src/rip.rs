@@ -32,7 +32,7 @@ pub const REQUIRED_MATCHES: u32 = 3;
 /// Rounds after which a sector never read without errors is given up.
 pub const GIVE_UP_ROUNDS: u32 = 5;
 /// Cache size assumed at least, since drives do not always report it.
-const MIN_CACHE_KIB: u32 = 2048;
+pub const MIN_CACHE_KIB: u32 = 2048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -124,7 +124,21 @@ pub fn read_track(
     is_accurate: &mut dyn FnMut(&[u8]) -> bool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<TrackRead> {
-    let span = Span::new(toc, index, options.offset);
+    let start = toc.tracks[index].start;
+    read_range(drive, toc, start..start + toc.track_sectors(index), options, is_accurate, progress)
+}
+
+/// Like [`read_track`], for the audio of any range of sectors, such as the
+/// hidden track before track 1.
+pub fn read_range(
+    drive: &mut Drive,
+    toc: &Toc,
+    sectors: Range<u32>,
+    options: Options<'_>,
+    is_accurate: &mut dyn FnMut(&[u8]) -> bool,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<TrackRead> {
+    let span = Span::new(toc, sectors, options.offset);
     let mut reader = Reader { drive, c2: options.c2, cancel: options.cancel, attempts: ATTEMPTS };
 
     let first = reader.read(span.sectors.clone(), &mut |f| progress(Progress::Reading(f)))?;
@@ -160,7 +174,7 @@ pub fn read_track(
     }
 
     let disc_end = toc.audio_lead_out();
-    let cache_sectors = options.cache_kib.max(MIN_CACHE_KIB) * 1024 / SECTOR_BYTES as u32;
+    let cache_sectors = cache_sectors(options.cache_kib);
     reader.flush_cache(span.sectors.start, disc_end, cache_sectors)?;
     let second = reader.read(span.sectors.clone(), &mut |f| progress(Progress::Verifying(f)))?;
 
@@ -261,10 +275,10 @@ struct Span {
 }
 
 impl Span {
-    fn new(toc: &Toc, index: usize, offset: i32) -> Self {
+    fn new(toc: &Toc, sectors: Range<u32>, offset: i32) -> Self {
         let sector = SECTOR_BYTES as i64;
-        let len = toc.track_sectors(index) as i64 * sector;
-        let start = toc.tracks[index].start as i64 * sector + offset as i64 * BYTES_PER_SAMPLE;
+        let len = sectors.len() as i64 * sector;
+        let start = sectors.start as i64 * sector + offset as i64 * BYTES_PER_SAMPLE;
         let disc_end = toc.audio_lead_out() as i64 * sector;
         let readable = start.max(0)..(start + len).min(disc_end);
         let sectors = (readable.start / sector) as u32..(readable.end as u64).div_ceil(sector as u64) as u32;
@@ -403,24 +417,47 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// Fills the drive's cache with another part of the disc, so that the
-    /// next read of `near` really reads the disc again.
     fn check_cancel(&self) -> Result<()> {
-        if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { Err(Error::Cancelled) } else { Ok(()) }
+        check_cancel(self.cancel)
     }
 
     fn flush_cache(&mut self, near: u32, disc_end: u32, cache_sectors: u32) -> Result<()> {
-        let len = (cache_sectors + SECTORS_PER_READ).min(disc_end / 4);
-        let start = if near < disc_end / 2 { disc_end - len } else { 0 };
-        let mut buf = vec![0u8; SECTORS_PER_READ as usize * SECTOR_BYTES];
-        for lba in (start..start + len).step_by(SECTORS_PER_READ as usize) {
-            let n = SECTORS_PER_READ.min(start + len - lba);
-            self.check_cancel()?;
-            // A failure here only means this part of the disc is damaged too.
-            let _ = self.drive.read_audio(lba, n, &mut buf[..n as usize * SECTOR_BYTES]);
-        }
-        Ok(())
+        flush_cache(self.drive, near, disc_end, cache_sectors, self.cancel)
     }
+}
+
+fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
+    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) { Err(Error::Cancelled) } else { Ok(()) }
+}
+
+/// Sectors read to empty a cache of `cache_kib` (at least [`MIN_CACHE_KIB`]).
+pub(crate) fn cache_sectors(cache_kib: u32) -> u32 {
+    cache_kib.max(MIN_CACHE_KIB) * 1024 / SECTOR_BYTES as u32
+}
+
+/// Fills the drive's cache with another part of the disc, so that the next
+/// read of `near` really reads the disc again: `cache_sectors` from the
+/// other half of the disc, at most a quarter of it.
+pub(crate) fn flush_cache(
+    drive: &mut Drive,
+    near: u32,
+    disc_end: u32,
+    cache_sectors: u32,
+    cancel: Option<&AtomicBool>,
+) -> Result<()> {
+    let len = (cache_sectors + SECTORS_PER_READ).min(disc_end / 4);
+    let start = if near < disc_end / 2 { disc_end - len } else { 0 };
+    let mut buf = vec![0u8; SECTORS_PER_READ as usize * SECTOR_BYTES];
+    for lba in (start..start + len).step_by(SECTORS_PER_READ as usize) {
+        let n = SECTORS_PER_READ.min(start + len - lba);
+        check_cancel(cancel)?;
+        match drive.read_audio(lba, n, &mut buf[..n as usize * SECTOR_BYTES]) {
+            Err(e) if e.is_drive_failure() => return Err(e),
+            // Otherwise this part of the disc is only damaged too.
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// The versions read for one sector, with how often each was read with and

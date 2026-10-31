@@ -10,6 +10,20 @@ testée, et on la raye une fois vérifiée.
 
 ### Linux (Debian)
 
+- [ ] Recherche du décalage (nouveau) : Réglages → Lecture → « Détecter avec
+  ce disque » (ou `galette offset`), avec un disque connu d'AccurateRip.
+  Si plusieurs décalages sont possibles, recommencer avec un autre disque :
+  il doit n'en rester qu'un, celui du lecteur.
+- [ ] Test du cache (nouveau) : Réglages → Lecture → « Tester le cache du
+  lecteur » (ou `galette cache`) ; le résultat doit s'afficher en quelques
+  secondes.
+- [ ] Piste cachée avant la piste 1 (HTOA, nouveau) : sur un disque qui en a
+  une, la ligne « Piste cachée » apparaît en tête de liste ; elle est rippée
+  en piste 00 (ou notée « Silence, pas de fichier »), le cue la référence
+  et le log a une section « Track 00 ».
+- [ ] Pré-accentuation (nouveau) : sur un disque concerné (rare, surtout des CD
+  des années 80), un avertissement s'affiche, le cue a « FLAGS PRE » et le
+  log le signale.
 - [ ] Réparation CTDB (nouveau) : sur un disque abîmé rippé en entier, les
   pistes abîmées attendent la fin (« Abîmée, réparation à la fin »), puis
   sont réparées si possible ; le log dit « REPAIRED from CTDB parity ».
@@ -36,6 +50,20 @@ testée, et on la raye une fois vérifiée.
 
 ### macOS
 
+- [x] Recherche du décalage : `galette offset` avec *Reload*, qui existe en
+  pressages décalés (17 décalages possibles, +6 parmi eux) ; `--among`
+  restreint bien les candidats. Reste à essayer dans la fenêtre, et à
+  confirmer avec un second disque.
+- [x] Test du cache : `galette cache` avec l'ASUS (122 ms depuis le disque,
+  3,4 ms en relecture ; 2 Mio lus ailleurs le vident). Reste à essayer dans
+  la fenêtre.
+- [ ] Piste cachée avant la piste 1 (HTOA, nouveau) : sur un disque qui en a
+  une, la ligne « Piste cachée » apparaît en tête de liste ; elle est rippée
+  en piste 00 (ou notée « Silence, pas de fichier »), le cue la référence
+  et le log a une section « Track 00 ».
+- [ ] Pré-accentuation (nouveau) : sur un disque concerné (rare, surtout des CD
+  des années 80), un avertissement s'affiche, le cue a « FLAGS PRE » et le
+  log le signale.
 - [x] Réparation CTDB : testée avec *Reload* (Metallica), pistes 11 et 12
   réparées puis confirmées par AccurateRip.
 - [x] Disque abîmé en mode sécurisé : testé avec *Reload* (Metallica), 12/13
@@ -54,6 +82,20 @@ testée, et on la raye une fois vérifiée.
 
 ### Windows
 
+- [ ] Recherche du décalage (nouveau) : Réglages → Lecture → « Détecter avec
+  ce disque » (ou `galette offset`), avec un disque connu d'AccurateRip.
+  Si plusieurs décalages sont possibles, recommencer avec un autre disque :
+  il doit n'en rester qu'un, celui du lecteur.
+- [ ] Test du cache (nouveau) : Réglages → Lecture → « Tester le cache du
+  lecteur » (ou `galette cache`) ; le résultat doit s'afficher en quelques
+  secondes.
+- [ ] Piste cachée avant la piste 1 (HTOA, nouveau) : sur un disque qui en a
+  une, la ligne « Piste cachée » apparaît en tête de liste ; elle est rippée
+  en piste 00 (ou notée « Silence, pas de fichier »), le cue la référence
+  et le log a une section « Track 00 ».
+- [ ] Pré-accentuation (nouveau) : sur un disque concerné (rare, surtout des CD
+  des années 80), un avertissement s'affiche, le cue a « FLAGS PRE » et le
+  log le signale.
 - [ ] Réparation CTDB (nouveau) : sur un disque abîmé rippé en entier, les
   pistes abîmées attendent la fin (« Abîmée, réparation à la fin »), puis
   sont réparées si possible ; le log dit « REPAIRED from CTDB parity ».
@@ -81,4 +123,8 @@ testée, et on la raye une fois vérifiée.
 
 ## Plus tard
 
-- [ ] HTOA (piste cachée avant la piste 1), pré-accentuation.
+- [ ] Désaccentuation : appliquer le filtre inverse aux pistes avec
+  pré-accentuation, en option (utile pour MP3/AAC ; en FLAC on garde l'audio
+  du disque tel quel, comme EAC).
+- [ ] Pré-accentuation signalée seulement dans le sous-canal Q (et pas dans la
+  TOC) : très rare, non détectée.

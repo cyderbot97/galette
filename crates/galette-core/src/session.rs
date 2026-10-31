@@ -173,6 +173,10 @@ pub struct Settings {
     pub offset: i32,
     /// Use C2 pointers if the drive has them.
     pub c2: bool,
+    /// How much to read elsewhere to empty the drive's cache, in KiB, as
+    /// measured by [`cache::test`](crate::cache::test); `None` to go by
+    /// what the drive reports.
+    pub cache_kib: Option<u32>,
     pub naming: Naming,
     /// Metadata to use, possibly edited by the user.
     pub release: Option<Release>,
@@ -181,7 +185,8 @@ pub struct Settings {
     pub embed_cover: bool,
     /// Save the cover next to the files, as `cover.jpg`.
     pub save_cover: bool,
-    /// Track numbers to rip, all of them if empty.
+    /// Track numbers to rip, all of them if empty. 0 is the hidden track
+    /// before track 1, if the disc has one.
     pub tracks: Vec<u8>,
     /// Set from another thread to stop the rip.
     pub cancel: Option<Arc<AtomicBool>>,
@@ -195,6 +200,9 @@ pub enum Warning {
     CoverNotSaved { path: PathBuf, error: String },
     /// Audio before track 1 (HTOA), `mm:ss:ff` long, which is not ripped.
     HiddenAudio(String),
+    /// These tracks were recorded with pre-emphasis. They are kept as on the
+    /// disc, flagged in the cue sheet; players must undo it.
+    PreEmphasis(Vec<u8>),
     /// The drive could not read the disc's catalog number.
     McnUnreadable(String),
     /// The drive could not read the pregaps: tracks start at their index 1.
@@ -206,6 +214,10 @@ impl fmt::Display for Warning {
         match self {
             Warning::CoverNotSaved { path, error } => write!(f, "cannot save {}: {error}", path.display()),
             Warning::HiddenAudio(length) => write!(f, "{length} of hidden audio before track 1 are not ripped"),
+            Warning::PreEmphasis(tracks) => {
+                let tracks: Vec<String> = tracks.iter().map(u8::to_string).collect();
+                write!(f, "pre-emphasis on track(s) {}: kept as on the disc, flagged in the cue sheet", tracks.join(", "))
+            }
             Warning::McnUnreadable(error) => write!(f, "cannot read the MCN: {error}"),
             Warning::PregapsUnreadable(error) => write!(f, "cannot read pregaps: {error}"),
         }
@@ -217,7 +229,10 @@ pub enum Event<'a> {
     ReadingSubcode,
     Subcode { pregaps: usize, isrcs: usize, mcn: Option<&'a str> },
     Warning(Warning),
+    /// Number 0 is the hidden track before track 1.
     TrackStarted { number: u8, title: &'a str },
+    /// The hidden track turned out to be silence: no file is written.
+    HiddenTrackSilent,
     TrackProgress { number: u8, progress: Progress },
     Encoding { number: u8 },
     /// The track is damaged: it waits for the end of the disc, to be
@@ -231,6 +246,7 @@ pub enum Event<'a> {
 pub struct Outcome {
     pub album_dir: PathBuf,
     pub tracks: Vec<log::TrackLog>,
+    pub hidden_track: log::HiddenTrack,
     pub log_path: PathBuf,
     pub cue_path: Option<PathBuf>,
     pub ctdb: ctdb::Status,
@@ -281,9 +297,15 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         isrcs: subcode.isrcs.iter().flatten().count(),
         mcn: subcode.mcn.as_deref(),
     });
-    if toc.tracks[0].start > 0 {
-        let hidden = crate::toc::format_msf(toc.tracks[0].start);
-        on_event(Event::Warning(Warning::HiddenAudio(hidden)));
+    let selected = |number: u8| settings.tracks.is_empty() || settings.tracks.contains(&number);
+    let first = &toc.tracks[0];
+    let has_hidden = first.start > 0 && first.is_audio;
+    if has_hidden && !selected(0) {
+        on_event(Event::Warning(Warning::HiddenAudio(crate::toc::format_msf(first.start))));
+    }
+    let pre_emphasis: Vec<u8> = toc.audio_tracks().filter(|t| t.pre_emphasis && selected(t.number)).map(|t| t.number).collect();
+    if !pre_emphasis.is_empty() {
+        on_event(Event::Warning(Warning::PreEmphasis(pre_emphasis)));
     }
 
     let disc_id = ids::musicbrainz(toc);
@@ -293,13 +315,13 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         mode: settings.mode,
         offset: settings.offset,
         c2: settings.c2 && disc.c2(),
-        cache_kib: disc.capabilities.map_or(0, |c| c.buffer_kib as u32),
+        cache_kib: settings.cache_kib.unwrap_or_else(|| disc.capabilities.map_or(0, |c| c.buffer_kib as u32)),
         cancel: settings.cancel.as_deref(),
     };
     let mut track_logs = Vec::new();
     let mut cue_tracks = Vec::new();
     // CTDB checks the whole disc at once, from CRCs gathered track by track.
-    let whole_disc = toc.audio_tracks().all(|t| settings.tracks.is_empty() || settings.tracks.contains(&t.number));
+    let whole_disc = toc.audio_tracks().all(|t| selected(t.number));
     let ctdb_entries = match &disc.ctdb {
         ctdb::Lookup::Found(entries) if whole_disc => Some(entries),
         _ => None,
@@ -312,17 +334,37 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         .and_then(|_| parity::Syndromes::new(disc_samples));
     let mut held: Vec<Held> = Vec::new();
     let mut ripped = RippedTracks { settings, release, toc, album_dir: &album_dir, disc_id: &disc_id, audio_count, pressings };
+    let title = |number: u8| {
+        release
+            .and_then(|r| r.tracks.iter().find(|t| t.number == number as u32))
+            .map(|t| t.title.clone())
+            .unwrap_or_else(|| if number == 0 { HIDDEN_TITLE.to_string() } else { format!("Track {number}") })
+    };
+
+    // The hidden track is not in AccurateRip or the CTDB: nothing proves it
+    // right but identical reads.
+    let mut hidden_track = if has_hidden { log::HiddenTrack::NotRipped } else { log::HiddenTrack::None };
+    if has_hidden && selected(0) {
+        cancelled()?;
+        on_event(Event::TrackStarted { number: 0, title: &title(0) });
+        let read = rip::read_range(drive, toc, 0..first.start, options, &mut |_| false, &mut |progress| {
+            on_event(Event::TrackProgress { number: 0, progress })
+        })?;
+        hidden_track = if is_silent(&read.audio) {
+            on_event(Event::HiddenTrackSilent);
+            log::HiddenTrack::Silent
+        } else {
+            log::HiddenTrack::Ripped(ripped.write_hidden(read, on_event)?)
+        };
+    }
+
     for (position, (index, track)) in toc.tracks.iter().enumerate().filter(|(_, t)| t.is_audio).enumerate() {
-        if !settings.tracks.is_empty() && !settings.tracks.contains(&track.number) {
+        if !selected(track.number) {
             continue;
         }
         cancelled()?;
         let number = track.number;
-        let title = release
-            .and_then(|r| r.tracks.iter().find(|t| t.number == number as u32))
-            .map(|t| t.title.clone())
-            .unwrap_or_else(|| format!("Track {number}"));
-        on_event(Event::TrackStarted { number, title: &title });
+        on_event(Event::TrackStarted { number, title: &title(number) });
 
         let mut is_accurate = |audio: &[u8]| {
             let sums = accuraterip::checksums(audio, position + 1, audio_count);
@@ -409,6 +451,7 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         ctdb: &ctdb,
         accuraterip_sets: disc.accuraterip.as_ref().map(Vec::len),
         tracks: &track_logs,
+        hidden_track: &hidden_track,
     };
     // A partial rip must not replace the log of the full one.
     let log_name = if track_logs.len() == audio_count {
@@ -423,14 +466,28 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     // A cue sheet of part of the disc would describe a disc that does not exist.
     let cue_path = if cue_tracks.len() == audio_count {
         let path = album_dir.join(format!("{base_name}.cue"));
-        let sheet = cue::cue_sheet(toc, release, subcode.mcn.as_deref(), settings.format.cue_type(), &cue_tracks);
+        let hidden = match &hidden_track {
+            log::HiddenTrack::Ripped(track) => Some(track.file_name.as_str()),
+            _ => None,
+        };
+        let sheet = cue::cue_sheet(toc, release, subcode.mcn.as_deref(), settings.format.cue_type(), &cue_tracks, hidden);
         fs::write(&path, sheet).map_err(|e| with_path(e, "cannot write", &path))?;
         Some(path)
     } else {
         None
     };
 
-    Ok(Outcome { album_dir, tracks: track_logs, log_path, cue_path, ctdb })
+    Ok(Outcome { album_dir, tracks: track_logs, hidden_track, log_path, cue_path, ctdb })
+}
+
+/// Title of the hidden track when the release does not name it.
+const HIDDEN_TITLE: &str = "Hidden track";
+/// Loudest sample of a hidden track that is only silence (about −60 dBFS):
+/// some discs have a little noise before track 1.
+const SILENCE: u16 = 32;
+
+fn is_silent(audio: &[u8]) -> bool {
+    audio.as_chunks::<2>().0.iter().all(|s| i16::from_le_bytes(*s).unsigned_abs() <= SILENCE)
 }
 
 /// A track read from the disc, before it is written.
@@ -463,20 +520,10 @@ impl RippedTracks<'_> {
         on_event: &mut dyn FnMut(Event),
     ) -> Result<(log::TrackLog, cue::TrackFile)> {
         let Held { position, index, isrc, read } = held;
-        let (settings, release, toc) = (self.settings, self.release, self.toc);
+        let toc = self.toc;
         let number = toc.tracks[index].number;
         let audio = read.audio;
-        let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
-        let path = self.album_dir.join(&file_name);
-        if settings.format != Format::Wav {
-            on_event(Event::Encoding { number });
-        }
-        let mut tags = tags::vorbis_comments(release, number as u32, self.audio_count as u32, self.disc_id);
-        if let Some(isrc) = &isrc {
-            tags.push(("ISRC", isrc.clone()));
-        }
-        let file = encode(settings, &audio, &tags)?;
-        fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
+        let file_name = self.write_file(number, &audio, isrc.as_deref(), on_event)?;
 
         let checksums = accuraterip::checksums(&audio, position + 1, self.audio_count);
         let track_log = log::TrackLog {
@@ -493,6 +540,42 @@ impl RippedTracks<'_> {
         };
         on_event(Event::TrackDone(&track_log));
         Ok((track_log, cue::TrackFile { index, file_name, pregap: pregaps[index], isrc }))
+    }
+
+    /// Encodes and writes the hidden track, as track 0, and reports it done.
+    fn write_hidden(&mut self, read: rip::TrackRead, on_event: &mut dyn FnMut(Event)) -> Result<log::TrackLog> {
+        let file_name = self.write_file(0, &read.audio, None, on_event)?;
+        let track_log = log::TrackLog {
+            number: 0,
+            start: 0,
+            file_name,
+            pregap: 0,
+            isrc: None,
+            peak: log::peak_level(&read.audio),
+            crc: log::copy_crc(&read.audio),
+            checksums: accuraterip::Checksums { v1: 0, v2: 0 },
+            verdict: Verdict::Unknown,
+            read: read.report,
+        };
+        on_event(Event::TrackDone(&track_log));
+        Ok(track_log)
+    }
+
+    /// Writes the file of track `number`; returns its name.
+    fn write_file(&self, number: u8, audio: &[u8], isrc: Option<&str>, on_event: &mut dyn FnMut(Event)) -> Result<String> {
+        let (settings, release, toc) = (self.settings, self.release, self.toc);
+        let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
+        let path = self.album_dir.join(&file_name);
+        if settings.format != Format::Wav {
+            on_event(Event::Encoding { number });
+        }
+        let mut tags = tags::vorbis_comments(release, number as u32, self.audio_count as u32, self.disc_id);
+        if let Some(isrc) = isrc {
+            tags.push(("ISRC", isrc.to_owned()));
+        }
+        let file = encode(settings, audio, &tags)?;
+        fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
+        Ok(file_name)
     }
 }
 
@@ -620,6 +703,12 @@ pub fn sanitize(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_silence() {
+        assert!(is_silent(&[0, 0, 0x10, 0, 0xF0, 0xFF]));
+        assert!(!is_silent(&[0, 0, 0x00, 0x01]));
+    }
 
     #[test]
     fn sanitizes_file_names() {

@@ -16,8 +16,9 @@ const READ_CD: u8 = 0xBE;
 
 /// Track number of the lead-out in a TOC response.
 const LEAD_OUT: u8 = 0xAA;
-/// Bit of the CONTROL field marking a data track.
+/// Bits of the CONTROL field marking a data track, and audio with pre-emphasis.
 const CONTROL_DATA: u8 = 0x04;
+const CONTROL_PRE_EMPHASIS: u8 = 0x01;
 
 /// Header + 99 tracks + lead-out, 8 bytes each.
 pub const TOC_BUFFER_LEN: usize = 4 + 100 * 8;
@@ -225,7 +226,9 @@ pub fn parse_toc(data: &[u8]) -> Result<Toc> {
         if number == LEAD_OUT {
             lead_out = Some(lba);
         } else {
-            tracks.push(Track { number, start: lba, is_audio: control & CONTROL_DATA == 0 });
+            let is_audio = control & CONTROL_DATA == 0;
+            let pre_emphasis = is_audio && control & CONTROL_PRE_EMPHASIS != 0;
+            tracks.push(Track { number, start: lba, is_audio, pre_emphasis });
         }
     }
 
@@ -247,7 +250,7 @@ mod tests {
     fn parses_enhanced_cd_toc() {
         let mut body = vec![1, 3];
         body.extend(descriptor(0x00, 1, 0));
-        body.extend(descriptor(0x00, 2, 20_000));
+        body.extend(descriptor(0x01, 2, 20_000));
         body.extend(descriptor(0x04, 3, 51_400));
         body.extend(descriptor(0x04, LEAD_OUT, 60_000));
         let mut data = ((body.len()) as u16).to_be_bytes().to_vec();
@@ -258,6 +261,7 @@ mod tests {
         assert_eq!(toc.tracks.len(), 3);
         assert!(toc.tracks[1].is_audio);
         assert!(!toc.tracks[2].is_audio);
+        assert_eq!(toc.tracks.iter().map(|t| t.pre_emphasis).collect::<Vec<_>>(), [false, true, false]);
     }
 
     #[test]

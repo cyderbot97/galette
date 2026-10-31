@@ -27,6 +27,18 @@ pub struct RipLog<'a> {
     /// Number of checksum sets in AccurateRip, `None` if the disc is unknown.
     pub accuraterip_sets: Option<usize>,
     pub tracks: &'a [TrackLog],
+    pub hidden_track: &'a HiddenTrack,
+}
+
+/// Audio before track 1 (HTOA), in the TOC's gap between LBA 0 and track 1.
+pub enum HiddenTrack {
+    /// Track 1 starts at LBA 0.
+    None,
+    /// Left out of the rip.
+    NotRipped,
+    /// Read, but only silence.
+    Silent,
+    Ripped(TrackLog),
 }
 
 pub struct TrackLog {
@@ -102,16 +114,37 @@ impl RipLog<'_> {
                 toc::format_msf(length),
                 track.start,
                 track.start + length - 1,
-                if track.is_audio { "" } else { "  (data)" }
+                if !track.is_audio { "  (data)" } else if track.pre_emphasis { "  (pre-emphasis)" } else { "" }
             ));
         }
         line(String::new());
+        let hidden_length = toc::format_msf(self.toc.tracks[0].start);
+        match self.hidden_track {
+            HiddenTrack::None => {}
+            HiddenTrack::NotRipped => line(format!("Hidden track         {hidden_length} before track 1, not ripped")),
+            HiddenTrack::Silent => line(format!("Hidden track         {hidden_length} before track 1, silent: no file")),
+            HiddenTrack::Ripped(_) => line(format!("Hidden track         {hidden_length} before track 1, ripped as track 00")),
+        }
+        if !matches!(self.hidden_track, HiddenTrack::None) {
+            line(String::new());
+        }
 
-        for t in self.tracks {
+        let hidden = match self.hidden_track {
+            HiddenTrack::Ripped(t) => Some(t),
+            _ => None,
+        };
+        for t in hidden.into_iter().chain(self.tracks) {
             line(format!("Track {:02}", t.number));
             line(format!("  File               {}", t.file_name));
-            line(format!("  Pregap             {}", toc::format_msf(t.pregap)));
-            line(format!("  ISRC               {}", t.isrc.clone().unwrap_or_else(none)));
+            if t.number == 0 {
+                line(format!("  Length             {hidden_length}"));
+            } else {
+                line(format!("  Pregap             {}", toc::format_msf(t.pregap)));
+                line(format!("  ISRC               {}", t.isrc.clone().unwrap_or_else(none)));
+            }
+            if self.toc.tracks.iter().any(|x| x.number == t.number && x.pre_emphasis) {
+                line("  Pre-emphasis       yes (audio kept as on the disc)".to_string());
+            }
             line(format!("  Read               {}", read_summary(&t.read)));
             for (label, lbas) in [("Suspicious", &t.read.suspicious), ("Unreadable", &t.read.unreadable)] {
                 for range in ranges(lbas) {
@@ -126,17 +159,24 @@ impl RipLog<'_> {
             }
             line(format!("  Peak level         {:.1} %", t.peak * 100.0));
             line(format!("  Copy CRC           {:08X}", t.crc));
+            if t.number == 0 {
+                line("  Result             not verified (AccurateRip and the CTDB do not cover it)".to_string());
+                line(String::new());
+                continue;
+            }
             line(format!("  AccurateRip v1     {:08X}", t.checksums.v1));
             line(format!("  AccurateRip v2     {:08X}", t.checksums.v2));
             line(format!("  Result             {}", verdict_text(t.verdict)));
             if let Status::Verified(v) = self.ctdb {
-                let confidence = self.tracks.iter().position(|x| x.number == t.number).map_or(0, |i| v.tracks[i]);
+                // The CTDB's tracks are the disc's audio tracks, in order.
+                let position = self.toc.audio_tracks().position(|x| x.number == t.number);
+                let confidence = position.and_then(|i| v.tracks.get(i).copied()).unwrap_or(0);
                 line(format!("  CTDB               {}", ctdb_text(confidence, v.total)));
             }
             line(String::new());
         }
 
-        let damaged = self.tracks.iter().filter(|t| !t.read.is_clean()).count();
+        let damaged = hidden.into_iter().chain(self.tracks).filter(|t| !t.read.is_clean()).count();
         if damaged == 0 {
             line("No read errors.".to_string());
         } else {
@@ -264,6 +304,58 @@ mod tests {
     fn groups_positions() {
         assert_eq!(ranges(&[3, 4, 5, 9, 20, 21]), [3..6, 9..10, 20..22]);
         assert!(ranges(&[]).is_empty());
+    }
+
+    fn track_log(number: u8, start: u32) -> TrackLog {
+        TrackLog {
+            number,
+            start,
+            file_name: format!("{number:02}.flac"),
+            pregap: 0,
+            isrc: None,
+            peak: 0.5,
+            crc: 0,
+            checksums: Checksums { v1: 1, v2: 2 },
+            verdict: Verdict::Accurate { version: 2, confidence: 7 },
+            read: ReadReport { passes: 1, ..Default::default() },
+        }
+    }
+
+    #[test]
+    fn hidden_track_and_pre_emphasis() {
+        let mut toc = Toc::parse_musicbrainz("1 2 30150 1650 10150").unwrap();
+        toc.tracks[1].pre_emphasis = true;
+        let drive = DriveInfo { vendor: "ASUS".into(), product: "X".into(), revision: "1".into() };
+        let tracks = [track_log(1, 1500), track_log(2, 10_000)];
+        let mut hidden = track_log(0, 0);
+        hidden.verdict = Verdict::Unknown;
+        let hidden = HiddenTrack::Ripped(hidden);
+        let ctdb = Status::Verified(crate::ctdb::Verification { total: 9, disc: 0, tracks: vec![0, 4] });
+        let log = RipLog {
+            date: UNIX_EPOCH,
+            drive: &drive,
+            offset: 6,
+            read_mode: "secure",
+            format: "flac",
+            toc: &toc,
+            release: None,
+            mcn: None,
+            cd_text: None,
+            ctdb: &ctdb,
+            accuraterip_sets: Some(1),
+            tracks: &tracks,
+            hidden_track: &hidden,
+        }
+        .render();
+        assert!(log.contains("    2 | 02:13.25 | 04:26.50 |        10000 |      29999  (pre-emphasis)"));
+        assert!(log.contains("Hidden track         00:20.00 before track 1, ripped as track 00"));
+        let section = |n: &str| log.split(&format!("Track {n}\r\n")).nth(1).unwrap().split("\r\n\r\n").next().unwrap().to_owned();
+        assert!(section("00").contains("Result             not verified"));
+        assert!(!section("00").contains("AccurateRip v1"));
+        assert!(section("02").contains("Pre-emphasis       yes"));
+        assert!(section("02").contains("CTDB               accurately ripped (confidence 4 of 9)"));
+        // The hidden track is not counted with the disc's tracks.
+        assert!(log.contains("2 of 2 track(s) accurately ripped."));
     }
 
     #[test]

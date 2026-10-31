@@ -185,7 +185,7 @@ async function selectRelease() {
   for (const row of rows()) {
     const info = release?.tracks.find((t) => t.number === Number(row.dataset.number));
     field(row, "title").value = info?.title ?? "";
-    localize(field(row, "title"), "track.default", { number: row.dataset.number }, "placeholder");
+    localize(field(row, "title"), ...defaultTitle(Number(row.dataset.number)), "placeholder");
     field(row, "artist").value = info?.artist ?? release?.artist ?? "";
   }
   await loadCover(release);
@@ -237,9 +237,14 @@ function editedRelease() {
     const trackArtist = field(row, "artist").value.trim() || artist;
     if (track.artist !== trackArtist) track.artist_ids = [];
     track.artist = trackArtist;
-    track.title = field(row, "title").value.trim() || t("track.default", { number });
+    track.title = field(row, "title").value.trim() || t(...defaultTitle(number));
   }
   return release;
+}
+
+/// The title of a track without one: number 0 is the hidden track before track 1.
+function defaultTitle(number) {
+  return number === 0 ? ["track.hidden", {}] : ["track.default", { number }];
 }
 
 // The album artist also changes the tracks that had the same artist.
@@ -333,6 +338,9 @@ listen("rip", ({ payload: event }) => {
     }
     case "repairing":
       setMessage("rip.repairing", {}, "info");
+      break;
+    case "hiddenSilent":
+      setStatus(row(0), "track.silent", {}, "clean");
       break;
     case "analyzing":
       setMessage("rip.analyzing", {}, "info");
@@ -509,6 +517,12 @@ function openPrefs() {
   if (disc?.offset != null) localize($("pref-offset-auto"), "settings.offsetAuto", { offset: signed(disc.offset) });
   else localize($("pref-offset-auto"), "settings.offsetNone");
   $("pref-c2").checked = prefs.c2;
+  // Both tests need a disc, and the drive to themselves.
+  $("pref-detect-offset").disabled = !disc || ripping;
+  $("pref-test-cache").disabled = !disc || ripping;
+  localize($("pref-offset-result"), disc ? "offset.hint" : "settings.needDisc");
+  if (prefs.cacheKib) localize($("pref-cache-result"), "cache.measured", { kib: prefs.cacheKib });
+  else localize($("pref-cache-result"), disc ? "cache.hint" : "settings.needDisc");
   $("pref-mp3-quality").value = prefs.mp3Quality;
   $("pref-embed").checked = prefs.embedCover;
   $("pref-save-cover").checked = prefs.saveCover;
@@ -533,6 +547,49 @@ $("settings").addEventListener("click", openPrefs);
 $("pref-folder").addEventListener("input", updatePreview);
 $("pref-file").addEventListener("input", updatePreview);
 $("pref-manual-offset").addEventListener("change", (e) => ($("pref-offset").disabled = !e.target.checked));
+
+$("pref-detect-offset").addEventListener("click", async () => {
+  const result = $("pref-offset-result");
+  $("pref-detect-offset").disabled = true;
+  localize(result, "offset.reading");
+  try {
+    const found = await invoke("detect_offset");
+    const offsets = found.offsets.map(signed).join(", ");
+    if (found.status === "found" && found.offsets[0] === disc.offset) {
+      localize(result, "offset.confirmed", { offset: offsets });
+    } else {
+      localize(result, `offset.${found.status}`, { offset: offsets, offsets });
+    }
+    if (found.status === "found" && found.offsets[0] !== disc.offset) {
+      $("pref-manual-offset").checked = true;
+      $("pref-offset").disabled = false;
+      $("pref-offset").value = found.offsets[0];
+    }
+  } catch (error) {
+    localize(result, "settings.testFailed", { error: messageRef(error) });
+  }
+  $("pref-detect-offset").disabled = false;
+});
+listen("tool", ({ payload: [track, fraction] }) => {
+  localize($("pref-offset-result"), "offset.progress", { track, percent: Math.round(fraction * 100) });
+});
+
+$("pref-test-cache").addEventListener("click", async () => {
+  const result = $("pref-cache-result");
+  $("pref-test-cache").disabled = true;
+  localize(result, "cache.testing");
+  try {
+    const test = await invoke("test_cache");
+    const params = { disc: Math.round(test.discMs), reread: test.rereadMs.toFixed(1), kib: test.flushKib };
+    localize(result, !test.caches ? "cache.none" : test.flushKib === null ? "cache.tooLarge" : "cache.emptied", params);
+    // A measure, not a choice: kept at once, whether the dialog is saved or not.
+    prefs.cacheKib = test.caches && test.flushKib > test.defaultKib ? test.flushKib : null;
+    invoke("save_prefs", { prefs }).catch((error) => setMessage("settings.notSaved", { error: messageRef(error) }, "bad"));
+  } catch (error) {
+    localize(result, "settings.testFailed", { error: messageRef(error) });
+  }
+  $("pref-test-cache").disabled = false;
+});
 // The theme shows at once; cancelling the dialog puts the previous one back.
 $("pref-theme").addEventListener("change", (e) => applyTheme(e.target.value));
 $("pref-language").addEventListener("change", (e) => setLanguage(e.target.value));

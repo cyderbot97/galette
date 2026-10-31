@@ -419,7 +419,7 @@ mod tests {
     fn disc() -> (Toc, Vec<Vec<u8>>) {
         let starts = [0u32, 30, 75];
         let toc = Toc::new(
-            starts.iter().enumerate().map(|(i, &s)| Track { number: i as u8 + 1, start: s, is_audio: true }).collect(),
+            starts.iter().enumerate().map(|(i, &s)| Track { number: i as u8 + 1, start: s, is_audio: true, pre_emphasis: false }).collect(),
             110,
         )
         .unwrap();

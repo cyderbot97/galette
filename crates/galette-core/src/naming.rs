@@ -69,7 +69,10 @@ impl Fields<'_> {
             "disc" => release.map_or(1, |r| r.disc_number).to_string(),
             "disccount" => release.map_or(1, |r| r.disc_count).to_string(),
             "track" => format!("{:02}", self.track?),
-            "title" => info.map(|t| t.title.clone()).unwrap_or_else(|| format!("Track {}", self.track.unwrap_or(0))),
+            "title" => info.map(|t| t.title.clone()).unwrap_or_else(|| match self.track.unwrap_or(0) {
+                0 => "Hidden track".to_string(),
+                n => format!("Track {n}"),
+            }),
             "artist" => info.map(|t| t.artist.clone()).or_else(|| self.get("albumartist"))?,
             _ => return None,
         })

@@ -12,7 +12,7 @@ use galette_core::metadata::{Release, musicbrainz};
 use galette_core::naming::Naming;
 use galette_core::session::{self, Disc, Event};
 use galette_core::toc::{self, Toc};
-use galette_core::{log, mp3, rip};
+use galette_core::{cache, log, mp3, offset, rip};
 
 #[derive(Parser)]
 #[command(name = "galette", version, about = "Secure audio CD ripper")]
@@ -41,6 +41,27 @@ enum Command {
 
     /// Rip the disc to FLAC (or WAV) files and verify them with AccurateRip.
     Rip(RipArgs),
+
+    /// Find the drive's read offset, with a disc known to AccurateRip
+    /// (for drives missing from its offset database).
+    Offset {
+        /// CD drive to use.
+        #[arg(short, long, default_value = drive::default_device())]
+        device: String,
+
+        /// Offsets that another disc matched (e.g. --among=+6,+673): only
+        /// those are kept.
+        #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
+        among: Vec<i32>,
+    },
+
+    /// Measure the drive's cache, to make sure that secure mode's re-reads
+    /// really read the disc again. Any audio CD will do.
+    Cache {
+        /// CD drive to use.
+        #[arg(short, long, default_value = drive::default_device())]
+        device: String,
+    },
 }
 
 #[derive(Args)]
@@ -86,6 +107,11 @@ struct RipArgs {
     /// Do not ask the drive for C2 pointers (for drives that report them badly).
     #[arg(long)]
     no_c2: bool,
+
+    /// How much to read elsewhere on the disc to empty the drive's cache
+    /// before re-reading, in KiB, as `galette cache` measured it.
+    #[arg(long)]
+    cache_kib: Option<u32>,
 
     /// Album folder template; may contain `/` for subfolders.
     /// Fields: {albumartist} {album} {year} {disc} {disccount}.
@@ -136,7 +162,83 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Info { device, toc, offline } => info(&device, toc.as_deref(), offline),
         Command::Rip(args) => rip(&args),
+        Command::Offset { device, among } => find_offset(&device, &among),
+        Command::Cache { device } => test_cache(&device),
     }
+}
+
+fn find_offset(device: &str, among: &[i32]) -> Result<()> {
+    let mut drive = Drive::open(Some(device))?;
+    let mut disc = Disc::read(&mut drive).with_context(|| format!("cannot read the disc in {device}"))?;
+    println!("Drive    {} {} ({})", disc.drive.vendor, disc.drive.product, disc.drive.revision);
+    disc.lookup().context("online lookup failed")?;
+    match disc.offset {
+        Some(o) => println!("Offset   {o:+} samples in the AccurateRip database"),
+        None => println!("Offset   this drive is not in the AccurateRip database"),
+    }
+    let Some(pressings) = &disc.accuraterip else {
+        bail!("this disc is not in AccurateRip: try another one");
+    };
+    let known = offset::known_offsets();
+    let detection = offset::detect(&mut drive, &disc.toc, pressings, &known, None, &mut |track, f| {
+        print!("\rReading  track {track}, {:>3}%\x1b[K", (f * 100.0) as u32);
+        std::io::stdout().flush().ok();
+    })?;
+    print!("\r\x1b[K");
+    match detection {
+        offset::Detection::Found(matches) => {
+            let all = matches.len();
+            let matches = if among.is_empty() { matches } else { offset::among(&matches, among) };
+            match matches.as_slice() {
+                [] => println!("None of the {all} offsets this disc matches is among those given: start again without --among"),
+                [found] => {
+                    println!("Found    read offset {:+} samples (AccurateRip confidence {})", found.offset, found.confidence);
+                    println!("Rip with --offset {:+}", found.offset);
+                }
+                several => {
+                    println!("Several offsets match: this disc exists in pressings shifted from one another.");
+                    for m in several {
+                        println!("         {:+} (AccurateRip confidence {})", m.offset, m.confidence);
+                    }
+                    let list: Vec<String> = several.iter().map(|m| format!("{:+}", m.offset)).collect();
+                    println!("Insert another disc and run: galette offset --among={}", list.join(","));
+                }
+            }
+        }
+        offset::Detection::NoMatch => {
+            println!("No offset within ±{} samples matches: the disc may be damaged; try another one", offset::MAX_OFFSET)
+        }
+        offset::Detection::UnsuitableDisc => {
+            println!("This disc has no middle track known to AccurateRip: try a disc with at least 3 tracks")
+        }
+    }
+    Ok(())
+}
+
+fn test_cache(device: &str) -> Result<()> {
+    let mut drive = Drive::open(Some(device))?;
+    let disc = Disc::read(&mut drive).with_context(|| format!("cannot read the disc in {device}"))?;
+    println!("Drive    {} {} ({})", disc.drive.vendor, disc.drive.product, disc.drive.revision);
+    let reported = disc.capabilities.map_or(0, |c| u32::from(c.buffer_kib));
+    println!("Cache    {reported} KiB according to the drive");
+    let result = cache::test(&mut drive, &disc.toc, reported, &mut |kib| {
+        print!("\rTesting  reading {kib} KiB elsewhere to empty the cache…\x1b[K");
+        std::io::stdout().flush().ok();
+    })?;
+    print!("\r\x1b[K");
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    println!("Timing   {:.1} ms from the disc, {:.1} ms when read again at once", ms(result.disc_read), ms(result.reread));
+    let default = reported.max(rip::MIN_CACHE_KIB);
+    match result.flush_kib {
+        _ if !result.caches => println!("Result   the drive does not cache audio: re-reads always read the disc"),
+        Some(kib) if kib <= default => println!("Result   the drive caches audio; reading {kib} KiB elsewhere empties it, as Galette does"),
+        Some(kib) => println!("Result   the drive caches audio; reading {kib} KiB elsewhere empties it: rip with --cache-kib {kib}"),
+        None => println!(
+            "Result   even reading {} KiB elsewhere does not empty the cache: secure re-reads may come from it (C2 pointers and AccurateRip still hold)",
+            cache::MAX_FLUSH_KIB
+        ),
+    }
+    Ok(())
 }
 
 fn read_toc(drive: &mut Drive, device: &str) -> Result<Toc> {
@@ -281,6 +383,7 @@ fn rip(args: &RipArgs) -> Result<()> {
         mode,
         offset,
         c2: !args.no_c2,
+        cache_kib: args.cache_kib,
         naming,
         release,
         cover,
@@ -313,6 +416,7 @@ fn rip(args: &RipArgs) -> Result<()> {
                     rip::MAX_REREADS
                 ),
             },
+            Event::HiddenTrackSilent => println!("\r{label}  silent: no file\x1b[K"),
             Event::Encoding { number } => print!("\r{}  encoding\x1b[K", labels[&number]),
             Event::TrackHeld { .. } => println!("\r{label}  damaged: waiting to be repaired from the CTDB\x1b[K"),
             Event::Repairing => print!("\rCTDB     downloading parity data and repairing…\x1b[K"),

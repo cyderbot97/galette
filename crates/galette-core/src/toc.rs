@@ -24,6 +24,9 @@ pub struct Track {
     /// First sector of the track (LBA).
     pub start: u32,
     pub is_audio: bool,
+    /// The audio was recorded with pre-emphasis (a treble boost that players
+    /// are expected to undo), as some early CDs were.
+    pub pre_emphasis: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,7 +82,7 @@ impl Toc {
             .iter()
             .zip(*first..)
             .map(|(&o, n)| {
-                Ok(Track { number: n as u8, start: unpregap(o)?, is_audio: true })
+                Ok(Track { number: n as u8, start: unpregap(o)?, is_audio: true, pre_emphasis: false })
             })
             .collect::<Result<_>>()?;
         Self::new(tracks, unpregap(*lead_out)?)
@@ -126,7 +129,7 @@ mod tests {
     fn parse_musicbrainz_notation() {
         let toc = Toc::parse_musicbrainz("1 3 30150 150 10150 20150").unwrap();
         assert_eq!(toc.tracks.len(), 3);
-        assert_eq!(toc.tracks[1], Track { number: 2, start: 10_000, is_audio: true });
+        assert_eq!(toc.tracks[1], Track { number: 2, start: 10_000, is_audio: true, pre_emphasis: false });
         assert_eq!(toc.lead_out, 30_000);
         assert_eq!(toc.track_sectors(2), 10_000);
     }
@@ -140,9 +143,9 @@ mod tests {
     #[test]
     fn enhanced_cd_audio_lead_out() {
         let tracks = vec![
-            Track { number: 1, start: 0, is_audio: true },
-            Track { number: 2, start: 20_000, is_audio: true },
-            Track { number: 3, start: 51_400, is_audio: false },
+            Track { number: 1, start: 0, is_audio: true, pre_emphasis: false },
+            Track { number: 2, start: 20_000, is_audio: true, pre_emphasis: false },
+            Track { number: 3, start: 51_400, is_audio: false, pre_emphasis: false },
         ];
         let toc = Toc::new(tracks, 60_000).unwrap();
         assert_eq!(toc.audio_lead_out(), 40_000);

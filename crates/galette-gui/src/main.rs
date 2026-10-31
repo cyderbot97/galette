@@ -24,7 +24,7 @@ use galette_core::metadata::coverart::{self, CoverArt};
 use galette_core::naming::Naming;
 use galette_core::rip::{self, Progress};
 use galette_core::session::{self, Disc, Event, Format};
-use galette_core::{ctdb, ids, log, mp3, toc};
+use galette_core::{cache, ctdb, ids, log, mp3, offset, toc};
 
 /// Least time between two reading progress events sent to the window.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -36,8 +36,12 @@ struct Shared {
     covers: Mutex<HashMap<String, Option<CoverArt>>>,
     prefs: Mutex<Prefs>,
     prefs_path: Mutex<Option<PathBuf>>,
+    /// Ripping, or testing the drive.
     ripping: AtomicBool,
     scanning: AtomicBool,
+    /// Offsets a disc matched when looking for the drive's read offset,
+    /// when there were several: the next disc picks among them.
+    offset_candidates: Mutex<Vec<i32>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -53,6 +57,9 @@ struct Prefs {
     /// Read offset given by hand; `None` to take it from AccurateRip.
     offset: Option<i32>,
     c2: bool,
+    /// How much to read elsewhere to empty the drive's cache, in KiB, as
+    /// measured by the cache test; `None` to go by what the drive reports.
+    cache_kib: Option<u32>,
     embed_cover: bool,
     save_cover: bool,
     eject_after: bool,
@@ -93,6 +100,7 @@ impl Default for Prefs {
             naming: Naming::default(),
             offset: None,
             c2: true,
+            cache_kib: None,
             embed_cover: true,
             save_cover: true,
             eject_after: false,
@@ -189,6 +197,9 @@ impl From<&session::Warning> for Message {
         match warning {
             Warning::CoverNotSaved { path, error } => Message::with("coverNotSaved", format!("{}: {error}", path.display())),
             Warning::HiddenAudio(length) => Message::with("hiddenAudio", length),
+            Warning::PreEmphasis(tracks) => {
+                Message::with("preEmphasis", tracks.iter().map(u8::to_string).collect::<Vec<_>>().join(", "))
+            }
             Warning::McnUnreadable(e) => Message::with("mcnUnreadable", e),
             Warning::PregapsUnreadable(e) => Message::with("pregapsUnreadable", e),
         }
@@ -215,6 +226,7 @@ struct DiscView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TrackView {
+    /// 0 for the hidden track before track 1.
     number: u8,
     length: String,
     is_audio: bool,
@@ -237,22 +249,23 @@ fn read_disc(state: &Shared) -> CommandResult<DiscView> {
     let mut drive = Drive::open(None)?;
     let mut disc = Disc::read(&mut drive)?;
     let warning = disc.lookup().err().map(|e| Message::with("lookup", e));
+    // Audio before track 1 is offered as track 0.
+    let first = &disc.toc.tracks[0];
+    let hidden = (first.start > 0 && first.is_audio)
+        .then(|| TrackView { number: 0, length: duration(first.start), is_audio: true });
     let view = DiscView {
         drive: format!("{} {}", disc.drive.vendor, disc.drive.product),
         c2: disc.c2(),
         offset: disc.offset,
         disc_id: ids::musicbrainz(&disc.toc),
         accuraterip: disc.accuraterip.as_ref().map(Vec::len),
-        tracks: disc
-            .toc
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| TrackView {
+        tracks: hidden
+            .into_iter()
+            .chain(disc.toc.tracks.iter().enumerate().map(|(i, t)| TrackView {
                 number: t.number,
                 length: duration(disc.toc.track_sectors(i)),
                 is_audio: t.is_audio,
-            })
+            }))
             .collect(),
         releases: disc.releases.clone(),
         cd_text: disc.cd_text_release(),
@@ -302,7 +315,7 @@ enum RipEvent {
     Warning { warning: Message },
     /// `phase`: "reading", "verifying", "rereading" (round `attempt` of
     /// `max_attempts`, on `sectors` sectors), "held" (damaged, waiting for
-    /// the CTDB repair) or "encoding".
+    /// the CTDB repair) or "encoding". Number 0 is the hidden track.
     Progress {
         number: u8,
         phase: &'static str,
@@ -313,6 +326,8 @@ enum RipEvent {
     /// `status`: "accurate" (with `confidence`), "mismatch", "clean" or "errors".
     /// Downloading the CTDB's parity data and repairing the held tracks.
     Repairing,
+    /// The hidden track is only silence: no file was written.
+    HiddenSilent,
     TrackDone { number: u8, status: &'static str, confidence: Option<u32>, read: ReadView },
     Finished { album_dir: PathBuf, accurate: usize, clean: usize, total: usize, verified: bool, ctdb: CtdbView },
     Failed { error: Message },
@@ -388,6 +403,7 @@ fn start_rip(app: AppHandle, state: State<'_, AppState>, request: RipRequest) ->
         mode: if prefs.secure { rip::Mode::Secure } else { rip::Mode::Burst },
         offset,
         c2: prefs.c2,
+        cache_kib: prefs.cache_kib,
         naming: prefs.naming,
         release: request.release,
         cover,
@@ -459,6 +475,7 @@ fn rip_event(event: Event) -> Option<RipEvent> {
         Event::Encoding { number } => progress(number, "encoding", 1.0),
         Event::TrackHeld { number } => progress(number, "held", 1.0),
         Event::Repairing => RipEvent::Repairing,
+        Event::HiddenTrackSilent => RipEvent::HiddenSilent,
         Event::TrackDone(track) => {
             let (status, confidence) = match (track.verdict, track.read.is_clean()) {
                 (Verdict::Accurate { confidence, .. }, _) => ("accurate", Some(confidence)),
@@ -480,6 +497,97 @@ fn rip_event(event: Event) -> Option<RipEvent> {
             RipEvent::TrackDone { number: track.number, status, confidence, read }
         }
     })
+}
+
+/// Result of the read offset detection. `status`: "found" (`offsets` holds
+/// it), "ambiguous" (another disc must choose among `offsets`), "noMatch",
+/// "unsuitable" (no middle track in AccurateRip) or "notInAccurateRip".
+#[derive(Serialize)]
+struct OffsetView {
+    status: &'static str,
+    offsets: Vec<i32>,
+}
+
+/// Looks for the drive's read offset with the disc in the drive; progress
+/// comes as `tool` events (track number and fraction read).
+#[tauri::command]
+async fn detect_offset(app: AppHandle, state: State<'_, AppState>) -> CommandResult<OffsetView> {
+    let disc = state.disc.lock().unwrap().clone().ok_or(Message::new("noScan"))?;
+    let state = Arc::clone(&state);
+    blocking(move || {
+        let view = |status, offsets| Ok(OffsetView { status, offsets });
+        let Some(pressings) = &disc.accuraterip else { return view("notInAccurateRip", Vec::new()) };
+        let detection = with_drive(&state, |drive| {
+            let known = offset::known_offsets();
+            let mut last_progress = Instant::now() - PROGRESS_INTERVAL;
+            offset::detect(drive, &disc.toc, pressings, &known, None, &mut |track, fraction| {
+                if last_progress.elapsed() >= PROGRESS_INTERVAL {
+                    last_progress = Instant::now();
+                    let _ = app.emit("tool", (track, fraction));
+                }
+            })
+        })?;
+        let matches = match detection {
+            offset::Detection::Found(matches) => matches,
+            offset::Detection::NoMatch => return view("noMatch", Vec::new()),
+            offset::Detection::UnsuitableDisc => return view("unsuitable", Vec::new()),
+        };
+        // Another disc left candidates: the drive's offset is among them,
+        // unless that disc was misread.
+        let mut candidates = state.offset_candidates.lock().unwrap();
+        let narrowed = offset::among(&matches, &candidates);
+        let kept = if narrowed.is_empty() { matches } else { narrowed };
+        let offsets: Vec<i32> = kept.iter().map(|m| m.offset).collect();
+        if let [_] = offsets[..] {
+            candidates.clear();
+            view("found", offsets)
+        } else {
+            *candidates = offsets.clone();
+            view("ambiguous", offsets)
+        }
+    })
+    .await
+}
+
+/// What the cache test found, see [`cache::CacheTest`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheView {
+    caches: bool,
+    disc_ms: f64,
+    reread_ms: f64,
+    flush_kib: Option<u32>,
+    /// What the rip reads without the test's measure.
+    default_kib: u32,
+}
+
+/// Measures the drive's cache with the disc in the drive.
+#[tauri::command]
+async fn test_cache(state: State<'_, AppState>) -> CommandResult<CacheView> {
+    let disc = state.disc.lock().unwrap().clone().ok_or(Message::new("noScan"))?;
+    let state = Arc::clone(&state);
+    blocking(move || {
+        let reported = disc.capabilities.map_or(0, |c| u32::from(c.buffer_kib));
+        let result = with_drive(&state, |drive| cache::test(drive, &disc.toc, reported, &mut |_| {}))?;
+        Ok(CacheView {
+            caches: result.caches,
+            disc_ms: result.disc_read.as_secs_f64() * 1000.0,
+            reread_ms: result.reread.as_secs_f64() * 1000.0,
+            flush_kib: result.flush_kib,
+            default_kib: reported.max(rip::MIN_CACHE_KIB),
+        })
+    })
+    .await
+}
+
+/// Runs `work` on the drive, keeping rips and the drive watcher away meanwhile.
+fn with_drive<T>(state: &Shared, work: impl FnOnce(&mut Drive) -> galette_core::Result<T>) -> CommandResult<T> {
+    if state.ripping.swap(true, Ordering::SeqCst) {
+        return Err(Message::new("alreadyRipping"));
+    }
+    let result = Drive::open(None).and_then(|mut drive| work(&mut drive));
+    state.ripping.store(false, Ordering::SeqCst);
+    Ok(result?)
 }
 
 #[tauri::command]
@@ -576,7 +684,9 @@ fn main() {
             open_folder,
             get_prefs,
             save_prefs,
-            preview_naming
+            preview_naming,
+            detect_offset,
+            test_cache
         ])
         .run(tauri::generate_context!())
         .expect("cannot start Galette");
