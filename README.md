@@ -169,4 +169,6 @@ une commande SCSI au lecteur.
 - [x] Windows (`IOCTL_SCSI_PASS_THROUGH_DIRECT`), installateur NSIS
 - [x] CD-Text : titres lus sur le disque quand MusicBrainz ne le connaît pas
 - [x] Vérification CTDB (CUETools Database), en plus d'AccurateRip
-- [ ] Réparation CTDB, HTOA, pré-accentuation
+- [x] Réparation CTDB : les pistes abîmées sont corrigées avec les données de
+  parité de la base, aidées par les erreurs C2 signalées par le lecteur
+- [ ] HTOA, pré-accentuation

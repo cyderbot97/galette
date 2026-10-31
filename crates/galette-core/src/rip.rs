@@ -83,6 +83,12 @@ pub struct ReadReport {
     /// Positions that were uncertain, until the final audio turned out to
     /// match AccurateRip, which proves it correct.
     pub cleared_by_accuraterip: usize,
+    /// Words (16-bit samples of one channel) corrected from the CUETools
+    /// Database's parity data, once the whole disc was read.
+    pub repaired_samples: usize,
+    /// Uncertain positions cleared by that repair, the repaired track
+    /// matching the database.
+    pub cleared_by_ctdb: usize,
 }
 
 impl ReadReport {
@@ -94,6 +100,11 @@ impl ReadReport {
 pub struct TrackRead {
     pub audio: Vec<u8>,
     pub report: ReadReport,
+    /// Words (16-bit samples of one channel, from the start of the track)
+    /// that are known to be doubtful: flagged by C2 in the version kept of
+    /// an unconfirmed sector, or in a sector that could not be read. Repair
+    /// from parity data can fix twice as many words it knows to be wrong.
+    pub erasures: Vec<u32>,
 }
 
 /// Reads the audio of the track at `index` in [`Toc::tracks`].
@@ -122,6 +133,14 @@ pub fn read_track(
     if options.mode == Mode::Burst || (first_clean && is_accurate(&audio)) {
         // Sectors the drive could not correct are doubtful, unless
         // AccurateRip proves the track right.
+        let mut erasures = Vec::new();
+        for (i, flag) in first.flags.iter().enumerate() {
+            match flag {
+                Flag::Good => {}
+                Flag::C2 => span.erasures(span.sectors.start + i as u32, first.c2.get(&i).map(Vec::as_slice), &mut erasures),
+                Flag::Failed => span.erasures(span.sectors.start + i as u32, None, &mut erasures),
+            }
+        }
         let mut report = ReadReport {
             passes: 1,
             c2_sectors: first.flags.iter().filter(|f| **f == Flag::C2).count() as u32,
@@ -133,8 +152,11 @@ pub fn read_track(
             report.cleared_by_accuraterip = report.suspicious.len() + report.unreadable.len();
             report.suspicious.clear();
             report.unreadable.clear();
+            erasures.clear();
         }
-        return Ok(TrackRead { audio, report });
+        erasures.sort_unstable();
+        erasures.dedup();
+        return Ok(TrackRead { audio, report, erasures });
     }
 
     let disc_end = toc.audio_lead_out();
@@ -181,12 +203,22 @@ pub fn read_track(
     }
 
     let data = merge(&first.data, &votes);
+    let mut erasures = Vec::new();
     for (&i, sector_votes) in &votes {
         let lba = span.sectors.start + i as u32;
-        if sector_votes.best().is_none() {
-            report.unreadable.push(lba);
-        } else if !sector_votes.confirmed() {
-            report.suspicious.push(lba);
+        match sector_votes.best_version() {
+            None => {
+                report.unreadable.push(lba);
+                span.erasures(lba, None, &mut erasures);
+            }
+            Some(version) if !sector_votes.confirmed() => {
+                report.suspicious.push(lba);
+                // A version read clean at least once has no known bad byte.
+                if let Some(mask) = version.c2.as_ref().filter(|_| version.clean == 0) {
+                    span.erasures(lba, Some(mask), &mut erasures);
+                }
+            }
+            Some(_) => {}
         }
     }
     report.suspicious.sort_unstable();
@@ -196,8 +228,11 @@ pub fn read_track(
         report.cleared_by_accuraterip = report.suspicious.len() + report.unreadable.len();
         report.suspicious.clear();
         report.unreadable.clear();
+        erasures.clear();
     }
-    Ok(TrackRead { audio, report })
+    erasures.sort_unstable();
+    erasures.dedup();
+    Ok(TrackRead { audio, report, erasures })
 }
 
 /// The first read with each doubtful sector replaced by its best version,
@@ -236,6 +271,22 @@ impl Span {
         Self { start, len: len as usize, sectors, readable }
     }
 
+    /// Adds the words of sector `lba` that its C2 `mask` flags (every word
+    /// if `None`) and that are in the track, as word indexes in the track.
+    fn erasures(&self, lba: u32, mask: Option<&[u8]>, out: &mut Vec<u32>) {
+        let sector_start = i64::from(lba) * SECTOR_BYTES as i64 - self.start;
+        for byte in 0..SECTOR_BYTES {
+            // One bit per byte of audio, the first byte's in the high bit.
+            if mask.is_some_and(|m| m[byte / 8] & (0x80 >> (byte % 8)) == 0) {
+                continue;
+            }
+            let position = sector_start + byte as i64;
+            if (0..self.len as i64).contains(&position) {
+                out.push((position / 2) as u32);
+            }
+        }
+    }
+
     /// Copies the track's part of the raw sectors to its place in the track.
     fn crop(&self, raw: &[u8]) -> Vec<u8> {
         let mut audio = vec![0u8; self.len];
@@ -261,6 +312,8 @@ struct Pass {
     data: Vec<u8>,
     flags: Vec<Flag>,
     first_lba: u32,
+    /// The C2 error bits of the sectors flagged [`Flag::C2`], by index.
+    c2: HashMap<usize, Vec<u8>>,
 }
 
 impl Pass {
@@ -284,7 +337,12 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn read(&mut self, sectors: Range<u32>, progress: &mut dyn FnMut(f32)) -> Result<Pass> {
         let count = (sectors.end - sectors.start) as usize;
-        let mut pass = Pass { data: vec![0; count * SECTOR_BYTES], flags: vec![Flag::Good; count], first_lba: sectors.start };
+        let mut pass = Pass {
+            data: vec![0; count * SECTOR_BYTES],
+            flags: vec![Flag::Good; count],
+            first_lba: sectors.start,
+            c2: HashMap::new(),
+        };
         let mut lba = sectors.start;
         while lba < sectors.end {
             self.check_cancel()?;
@@ -333,8 +391,14 @@ impl Reader<'_> {
         self.drive.read_audio_c2(lba, n, &mut buf)?;
         for (k, raw) in buf.chunks_exact(stride).enumerate() {
             data[k * SECTOR_BYTES..(k + 1) * SECTOR_BYTES].copy_from_slice(&raw[..SECTOR_BYTES]);
-            let has_errors = raw[SECTOR_BYTES..SECTOR_BYTES + mmc::C2_BITS_LEN].iter().any(|&b| b != 0);
-            pass.flags[i + k] = if has_errors { Flag::C2 } else { Flag::Good };
+            let bits = &raw[SECTOR_BYTES..SECTOR_BYTES + mmc::C2_BITS_LEN];
+            if bits.iter().any(|&b| b != 0) {
+                pass.flags[i + k] = Flag::C2;
+                pass.c2.insert(i + k, bits.to_vec());
+            } else {
+                pass.flags[i + k] = Flag::Good;
+                pass.c2.remove(&(i + k));
+            }
         }
         Ok(())
     }
@@ -363,7 +427,17 @@ impl Reader<'_> {
 /// without C2 errors.
 #[derive(Default)]
 struct Votes {
-    versions: Vec<(Vec<u8>, u32, u32)>,
+    versions: Vec<Version>,
+}
+
+/// One content read for a sector.
+struct Version {
+    data: Vec<u8>,
+    /// Reads without, then with C2 errors.
+    clean: u32,
+    flagged: u32,
+    /// The bytes C2 flagged in any of the flagged reads.
+    c2: Option<Vec<u8>>,
 }
 
 impl Votes {
@@ -373,28 +447,40 @@ impl Votes {
             flag => flag == Flag::Good,
         };
         let data = pass.sector(i);
-        let entry = match self.versions.iter_mut().position(|(d, _, _)| d == data) {
+        let version = match self.versions.iter_mut().position(|v| v.data == data) {
             Some(k) => &mut self.versions[k],
             None => {
-                self.versions.push((data.to_vec(), 0, 0));
+                self.versions.push(Version { data: data.to_vec(), clean: 0, flagged: 0, c2: None });
                 self.versions.last_mut().unwrap()
             }
         };
-        if clean { entry.1 += 1 } else { entry.2 += 1 }
+        if clean {
+            version.clean += 1;
+        } else {
+            version.flagged += 1;
+            if let Some(bits) = pass.c2.get(&i) {
+                let mask = version.c2.get_or_insert_with(|| vec![0; bits.len()]);
+                mask.iter_mut().zip(bits).for_each(|(m, b)| *m |= b);
+            }
+        }
     }
 
     fn confirmed(&self) -> bool {
-        self.versions.iter().any(|(_, clean, _)| *clean >= REQUIRED_MATCHES)
+        self.versions.iter().any(|v| v.clean >= REQUIRED_MATCHES)
     }
 
     /// Never read without errors, so re-reading it is unlikely to help.
     fn hopeless(&self) -> bool {
-        self.versions.iter().all(|(_, clean, _)| *clean == 0)
+        self.versions.iter().all(|v| v.clean == 0)
     }
 
     /// The most often read version, error-free reads first.
+    fn best_version(&self) -> Option<&Version> {
+        self.versions.iter().max_by_key(|v| (v.clean, v.flagged))
+    }
+
     fn best(&self) -> Option<&[u8]> {
-        self.versions.iter().max_by_key(|(_, clean, c2)| (*clean, *c2)).map(|(d, _, _)| d.as_slice())
+        self.best_version().map(|v| v.data.as_slice())
     }
 }
 
@@ -588,12 +674,24 @@ mod tests {
         disc.damage.insert(60, Damage::FlaggedButRight);
         let read = rip(disc, 1, 0, Mode::Burst, false);
         assert_eq!((read.report.c2_sectors, read.report.suspicious.as_slice()), (1, &[60][..]));
+        // The flagged byte (the 8th of sector 60, track 2 starting at 50).
+        assert_eq!(read.erasures, [(10 * SECTOR_BYTES as u32 + 7) / 2]);
 
         let mut disc = FakeDisc::default();
         disc.damage.insert(60, Damage::FlaggedButRight);
         let read = rip(disc, 1, 0, Mode::Burst, true);
         assert!(read.report.is_clean());
         assert_eq!(read.report.cleared_by_accuraterip, 1);
+        assert!(read.erasures.is_empty());
+    }
+
+    #[test]
+    fn unreadable_sectors_are_erasures() {
+        let mut disc = FakeDisc::default();
+        disc.damage.insert(80, Damage::Unreadable);
+        let read = rip(disc, 1, 0, Mode::Secure, false);
+        let first = 30 * SECTOR_BYTES as u32 / 2;
+        assert_eq!(read.erasures, (first..first + SECTOR_BYTES as u32 / 2).collect::<Vec<_>>());
     }
 
     #[test]

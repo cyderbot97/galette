@@ -10,6 +10,9 @@ testée, et on la raye une fois vérifiée.
 
 ### Linux (Debian)
 
+- [ ] Réparation CTDB (nouveau) : sur un disque abîmé rippé en entier, les
+  pistes abîmées attendent la fin (« Abîmée, réparation à la fin »), puis
+  sont réparées si possible ; le log dit « REPAIRED from CTDB parity ».
 - [ ] Disque abîmé en mode sécurisé (nouveau) : les relectures abandonnent un
   secteur jamais lu sans erreur après 5 tours ; le rip doit finir en un temps
   raisonnable et le log noter les secteurs suspects ou illisibles. En mode
@@ -33,6 +36,8 @@ testée, et on la raye une fois vérifiée.
 
 ### macOS
 
+- [x] Réparation CTDB : testée avec *Reload* (Metallica), pistes 11 et 12
+  réparées puis confirmées par AccurateRip.
 - [x] Disque abîmé en mode sécurisé : testé avec *Reload* (Metallica), 12/13
   pistes confirmées, la piste rayée finit avec ses secteurs suspects.
 - [ ] Mode rapide sur disque abîmé (nouveau) : les secteurs avec erreurs C2
@@ -49,6 +54,9 @@ testée, et on la raye une fois vérifiée.
 
 ### Windows
 
+- [ ] Réparation CTDB (nouveau) : sur un disque abîmé rippé en entier, les
+  pistes abîmées attendent la fin (« Abîmée, réparation à la fin »), puis
+  sont réparées si possible ; le log dit « REPAIRED from CTDB parity ».
 - [ ] Disque abîmé en mode sécurisé (nouveau) : les relectures abandonnent un
   secteur jamais lu sans erreur après 5 tours ; le rip doit finir en un temps
   raisonnable et le log noter les secteurs suspects ou illisibles. En mode
@@ -73,6 +81,4 @@ testée, et on la raye une fois vérifiée.
 
 ## Plus tard
 
-- [ ] CTDB : réparation des rips à partir des données de parité (la
-  vérification est faite).
 - [ ] HTOA (piste cachée avant la piste 1), pré-accentuation.

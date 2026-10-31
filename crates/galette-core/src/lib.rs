@@ -24,6 +24,7 @@ mod m4a;
 pub mod metadata;
 pub mod mp3;
 pub mod naming;
+pub mod parity;
 pub mod rip;
 pub mod session;
 pub mod tags;

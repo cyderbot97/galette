@@ -234,4 +234,4 @@ td input:not([type]):hover { border-color: var(--line); }
 .state.bad { color: var(--bad); font-weight: 600; }
 .bar { height: 6px; margin-top: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .bar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-.bar.rereading div { background: var(--bad); }
+.bar.rereading div, .bar.held div { background: var(--bad); }

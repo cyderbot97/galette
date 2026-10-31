@@ -64,6 +64,9 @@ const STRINGS = {
     "read.suspicious": "{count} SUSPECT(S)",
     "read.unreadable": "{count} ILLISIBLE(S)",
     "read.cleared": "{count} secteur(s) incertain(s) confirmé(s) par AccurateRip",
+    "read.repaired": "réparée grâce au CTDB ({count} échantillon(s) corrigé(s))",
+    "track.held": "Abîmée, réparation à la fin",
+    "rip.repairing": "Réparation des pistes abîmées avec le CTDB…",
 
     // Footer
     "footer.folder": "Dossier",
@@ -212,6 +215,9 @@ const STRINGS = {
     "read.suspicious": "{count} SUSPICIOUS",
     "read.unreadable": "{count} UNREADABLE",
     "read.cleared": "{count} uncertain sector(s) proven right by AccurateRip",
+    "read.repaired": "repaired from the CTDB ({count} sample(s) corrected)",
+    "track.held": "Damaged, repaired at the end",
+    "rip.repairing": "Repairing damaged tracks with the CTDB…",
 
     "footer.folder": "Folder",
     "footer.browse": "Browse…",

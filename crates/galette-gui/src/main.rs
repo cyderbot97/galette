@@ -301,7 +301,8 @@ enum RipEvent {
     Analyzed,
     Warning { warning: Message },
     /// `phase`: "reading", "verifying", "rereading" (round `attempt` of
-    /// `max_attempts`, on `sectors` sectors) or "encoding".
+    /// `max_attempts`, on `sectors` sectors), "held" (damaged, waiting for
+    /// the CTDB repair) or "encoding".
     Progress {
         number: u8,
         phase: &'static str,
@@ -310,6 +311,8 @@ enum RipEvent {
         reread: Option<Reread>,
     },
     /// `status`: "accurate" (with `confidence`), "mismatch", "clean" or "errors".
+    /// Downloading the CTDB's parity data and repairing the held tracks.
+    Repairing,
     TrackDone { number: u8, status: &'static str, confidence: Option<u32>, read: ReadView },
     Finished { album_dir: PathBuf, accurate: usize, clean: usize, total: usize, verified: bool, ctdb: CtdbView },
     Failed { error: Message },
@@ -364,6 +367,7 @@ struct ReadView {
     suspicious: usize,
     unreadable: usize,
     cleared: usize,
+    repaired: usize,
 }
 
 /// Starts ripping in the background; progress comes as `rip` events.
@@ -453,6 +457,8 @@ fn rip_event(event: Event) -> Option<RipEvent> {
             },
         },
         Event::Encoding { number } => progress(number, "encoding", 1.0),
+        Event::TrackHeld { number } => progress(number, "held", 1.0),
+        Event::Repairing => RipEvent::Repairing,
         Event::TrackDone(track) => {
             let (status, confidence) = match (track.verdict, track.read.is_clean()) {
                 (Verdict::Accurate { confidence, .. }, _) => ("accurate", Some(confidence)),
@@ -469,6 +475,7 @@ fn rip_event(event: Event) -> Option<RipEvent> {
                 suspicious: read.suspicious.len(),
                 unreadable: read.unreadable.len(),
                 cleared: read.cleared_by_accuraterip,
+                repaired: read.repaired_samples,
             };
             RipEvent::TrackDone { number: track.number, status, confidence, read }
         }

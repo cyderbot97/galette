@@ -23,7 +23,7 @@ use crate::toc::Toc;
 #[cfg(target_os = "macos")]
 use crate::aac;
 use crate::cdtext::CdText;
-use crate::{Error, Result, aiff, alac, ctdb, cue, flac, gaps, log, mp3, tags, wav};
+use crate::{Error, Result, aiff, alac, ctdb, cue, flac, gaps, log, mp3, parity, tags, wav};
 
 /// What we know about the disc in the drive.
 #[derive(Clone)]
@@ -220,6 +220,11 @@ pub enum Event<'a> {
     TrackStarted { number: u8, title: &'a str },
     TrackProgress { number: u8, progress: Progress },
     Encoding { number: u8 },
+    /// The track is damaged: it waits for the end of the disc, to be
+    /// repaired from the CTDB's parity data if possible.
+    TrackHeld { number: u8 },
+    /// Downloading the parity data and repairing the held tracks.
+    Repairing,
     TrackDone(&'a log::TrackLog),
 }
 
@@ -295,7 +300,18 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     let mut cue_tracks = Vec::new();
     // CTDB checks the whole disc at once, from CRCs gathered track by track.
     let whole_disc = toc.audio_tracks().all(|t| settings.tracks.is_empty() || settings.tracks.contains(&t.number));
-    let mut ctdb_crcs = (whole_disc && matches!(disc.ctdb, ctdb::Lookup::Found(_))).then(|| ctdb::Crcs::new(toc));
+    let ctdb_entries = match &disc.ctdb {
+        ctdb::Lookup::Found(entries) if whole_disc => Some(entries),
+        _ => None,
+    };
+    let mut ctdb_crcs = ctdb_entries.map(|_| ctdb::Crcs::new(toc));
+    // Damaged tracks can be repaired with the parity of an entry.
+    let disc_samples = ctdb::track_samples(toc).iter().map(|&s| s as usize).sum();
+    let mut syndromes = ctdb_entries
+        .filter(|entries| entries.iter().any(|e| e.parity_url.is_some()))
+        .and_then(|_| parity::Syndromes::new(disc_samples));
+    let mut held: Vec<Held> = Vec::new();
+    let mut ripped = RippedTracks { settings, release, toc, album_dir: &album_dir, disc_id: &disc_id, audio_count, pressings };
     for (position, (index, track)) in toc.tracks.iter().enumerate().filter(|(_, t)| t.is_audio).enumerate() {
         if !settings.tracks.is_empty() && !settings.tracks.contains(&track.number) {
             continue;
@@ -307,7 +323,6 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
             .map(|t| t.title.clone())
             .unwrap_or_else(|| format!("Track {number}"));
         on_event(Event::TrackStarted { number, title: &title });
-        let isrc = subcode.isrcs[index].clone();
 
         let mut is_accurate = |audio: &[u8]| {
             let sums = accuraterip::checksums(audio, position + 1, audio_count);
@@ -316,46 +331,67 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
         let read = rip::read_track(drive, toc, index, options, &mut is_accurate, &mut |progress| {
             on_event(Event::TrackProgress { number, progress })
         })?;
-        let audio = read.audio;
         if let Some(crcs) = &mut ctdb_crcs {
-            crcs.add(&audio);
+            crcs.add(&read.audio);
+        }
+        if let Some(syndromes) = &mut syndromes {
+            syndromes.add(&read.audio);
         }
 
-        let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
-        let path = album_dir.join(&file_name);
+        let track = Held { position, index, isrc: subcode.isrcs[index].clone(), read };
+        let verdict = accuraterip::verify(pressings, position, accuraterip::checksums(&track.read.audio, position + 1, audio_count));
+        let doubtful = !matches!(verdict, Verdict::Accurate { .. })
+            && (!track.read.report.is_clean() || verdict == Verdict::Mismatch);
+        if syndromes.is_some() && doubtful {
+            on_event(Event::TrackHeld { number });
+            held.push(track);
+            continue;
+        }
         cancelled()?;
-        if settings.format != Format::Wav {
-            on_event(Event::Encoding { number });
-        }
-        let mut tags = tags::vorbis_comments(release, number as u32, audio_count as u32, &disc_id);
-        if let Some(isrc) = &isrc {
-            tags.push(("ISRC", isrc.clone()));
-        }
-        let file = encode(settings, &audio, &tags)?;
-        fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
-
-        let checksums = accuraterip::checksums(&audio, position + 1, audio_count);
-        let track_log = log::TrackLog {
-            number,
-            start: track.start,
-            file_name: file_name.clone(),
-            pregap: subcode.pregaps[index],
-            isrc: isrc.clone(),
-            peak: log::peak_level(&audio),
-            crc: log::copy_crc(&audio),
-            checksums,
-            verdict: accuraterip::verify(pressings, position, checksums),
-            read: read.report,
-        };
-        on_event(Event::TrackDone(&track_log));
+        let (track_log, cue_track) = ripped.write(track, &subcode.pregaps, on_event)?;
         track_logs.push(track_log);
-        cue_tracks.push(cue::TrackFile { index, file_name, pregap: subcode.pregaps[index], isrc });
+        cue_tracks.push(cue_track);
     }
 
-    let ctdb = match (&disc.ctdb, ctdb_crcs.and_then(ctdb::Crcs::finish)) {
+    let crcs = ctdb_crcs.and_then(ctdb::Crcs::finish);
+    let mut repairs = Vec::new();
+    if let (Some(entries), Some(crcs), Some(syndromes)) = (ctdb_entries, &crcs, &syndromes)
+        && !held.is_empty()
+    {
+        on_event(Event::Repairing);
+        let damaged: Vec<(usize, &[u32])> = held.iter().map(|t| (t.position, t.read.erasures.as_slice())).collect();
+        repairs = ctdb::repair(entries, toc, crcs, syndromes, &damaged);
+    }
+    for mut track in held {
+        cancelled()?;
+        if let Some(repair) = repairs.iter().find(|r| r.track == track.position) {
+            for &(word, value) in &repair.fixes {
+                track.read.audio[2 * word..][..2].iter_mut().zip(value.to_le_bytes()).for_each(|(b, v)| *b ^= v);
+            }
+            let report = &mut track.read.report;
+            report.repaired_samples = repair.fixes.len();
+            report.cleared_by_ctdb = report.suspicious.len() + report.unreadable.len();
+            report.suspicious.clear();
+            report.unreadable.clear();
+        }
+        let (track_log, cue_track) = ripped.write(track, &subcode.pregaps, on_event)?;
+        track_logs.push(track_log);
+        cue_tracks.push(cue_track);
+    }
+    track_logs.sort_by_key(|t| t.number);
+    cue_tracks.sort_by_key(|t| t.index);
+
+    let ctdb = match (&disc.ctdb, crcs) {
         (ctdb::Lookup::Unavailable, _) => ctdb::Status::Unavailable,
         (ctdb::Lookup::NotFound, _) => ctdb::Status::NotFound,
-        (ctdb::Lookup::Found(entries), Some(crcs)) => ctdb::Status::Verified(ctdb::verify(entries, toc, &crcs)),
+        (ctdb::Lookup::Found(entries), Some(crcs)) => {
+            let mut verification = ctdb::verify(entries, toc, &crcs);
+            // The CRCs were taken before the repair: count what it matched.
+            for repair in &repairs {
+                verification.tracks[repair.track] = repair.confidence;
+            }
+            ctdb::Status::Verified(verification)
+        }
         (ctdb::Lookup::Found(_), None) => ctdb::Status::PartialRip,
     };
 
@@ -395,6 +431,69 @@ pub fn rip(drive: &mut Drive, disc: &Disc, settings: &Settings, on_event: &mut d
     };
 
     Ok(Outcome { album_dir, tracks: track_logs, log_path, cue_path, ctdb })
+}
+
+/// A track read from the disc, before it is written.
+struct Held {
+    /// Index among the audio tracks.
+    position: usize,
+    /// Index in the TOC.
+    index: usize,
+    isrc: Option<String>,
+    read: rip::TrackRead,
+}
+
+/// What writing a track's file needs to know about the rip.
+struct RippedTracks<'a> {
+    settings: &'a Settings,
+    release: Option<&'a Release>,
+    toc: &'a Toc,
+    album_dir: &'a Path,
+    disc_id: &'a str,
+    audio_count: usize,
+    pressings: Option<&'a [Pressing]>,
+}
+
+impl RippedTracks<'_> {
+    /// Encodes and writes the track, and reports it done.
+    fn write(
+        &mut self,
+        held: Held,
+        pregaps: &[u32],
+        on_event: &mut dyn FnMut(Event),
+    ) -> Result<(log::TrackLog, cue::TrackFile)> {
+        let Held { position, index, isrc, read } = held;
+        let (settings, release, toc) = (self.settings, self.release, self.toc);
+        let number = toc.tracks[index].number;
+        let audio = read.audio;
+        let file_name = format!("{}.{}", settings.naming.file(release, toc, number), settings.format.extension());
+        let path = self.album_dir.join(&file_name);
+        if settings.format != Format::Wav {
+            on_event(Event::Encoding { number });
+        }
+        let mut tags = tags::vorbis_comments(release, number as u32, self.audio_count as u32, self.disc_id);
+        if let Some(isrc) = &isrc {
+            tags.push(("ISRC", isrc.clone()));
+        }
+        let file = encode(settings, &audio, &tags)?;
+        fs::write(&path, file).map_err(|e| with_path(e, "cannot write", &path))?;
+
+        let checksums = accuraterip::checksums(&audio, position + 1, self.audio_count);
+        let track_log = log::TrackLog {
+            number,
+            start: toc.tracks[index].start,
+            file_name: file_name.clone(),
+            pregap: pregaps[index],
+            isrc: isrc.clone(),
+            peak: log::peak_level(&audio),
+            crc: log::copy_crc(&audio),
+            checksums,
+            verdict: accuraterip::verify(self.pressings, position, checksums),
+            read: read.report,
+        };
+        on_event(Event::TrackDone(&track_log));
+        Ok((track_log, cue::TrackFile { index, file_name, pregap: pregaps[index], isrc }))
+    }
 }
 
 /// A track's file in the chosen format, from its audio and Vorbis comments.

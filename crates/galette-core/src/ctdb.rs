@@ -1,6 +1,7 @@
 //! CUETools Database (CTDB): a second check besides AccurateRip, often
 //! knowing discs that AccurateRip does not, or with few submissions.
-//! Verification only (CTDB can also repair rips from its parity data).
+//! Its entries also have parity data, which repairs damaged tracks (see
+//! [`crate::parity`]).
 //!
 //! Each entry of the database is one version of the disc: a CRC32 of the
 //! whole disc, a CRC32 per track and how many rips confirmed it. The CRCs
@@ -13,6 +14,7 @@ use std::collections::HashMap;
 
 use crc32fast::Hasher;
 
+use crate::parity::{self, Syndromes};
 use crate::toc::{SECTOR_BYTES, Toc};
 use crate::{Error, Result, http};
 
@@ -53,6 +55,10 @@ pub struct Entry {
     pub track_crcs: Option<Vec<u32>>,
     /// The disc layout it was submitted for, as in [`toc_param`].
     pub toc: String,
+    /// Where its parity file is, if it has one.
+    pub parity_url: Option<String>,
+    /// Syndromes per column in the parity file.
+    pub npar: usize,
 }
 
 /// The disc's layout as the database writes it: the start of every track
@@ -96,7 +102,9 @@ fn parse(xml: &str) -> Vec<Entry> {
             continue;
         };
         let track_crcs = attribute("trackcrcs").and_then(|s| s.split(' ').map(hex).collect());
-        entries.push(Entry { confidence, crc, track_crcs, toc });
+        let parity_url = attribute("hasparity").filter(|u| u.starts_with("http"));
+        let npar = attribute("npar").and_then(|n| n.parse().ok()).unwrap_or(0);
+        entries.push(Entry { confidence, crc, track_crcs, toc, parity_url, npar });
     }
     entries
 }
@@ -117,16 +125,20 @@ pub struct Crcs {
     next_wanted: usize,
 }
 
+/// The samples of each audio track of `toc`.
+pub fn track_samples(toc: &Toc) -> Vec<u32> {
+    toc.tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.is_audio)
+        .map(|(i, _)| toc.track_sectors(i) * (SECTOR_BYTES as u32 / SAMPLE_BYTES))
+        .collect()
+}
+
 impl Crcs {
     /// For a rip of all the audio tracks of `toc`.
     pub fn new(toc: &Toc) -> Self {
-        let lengths: Vec<u32> = toc
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.is_audio)
-            .map(|(i, _)| toc.track_sectors(i) * (SECTOR_BYTES as u32 / SAMPLE_BYTES))
-            .collect();
+        let lengths = track_samples(toc);
         let total: u32 = lengths.iter().sum();
         // The disc's CRC leaves out a stride at the start, and at the end a
         // stride plus what does not fill a whole one.
@@ -188,6 +200,7 @@ impl Crcs {
         Some(OffsetCrcs {
             disc: segment(self.bounds[0], self.bounds[last])?,
             tracks: self.bounds.windows(2).map(|w| segment(w[0], w[1])).collect::<Option<_>>()?,
+            bounds: self.bounds,
         })
     }
 }
@@ -196,6 +209,140 @@ impl Crcs {
 pub struct OffsetCrcs {
     disc: Vec<u32>,
     tracks: Vec<Vec<u32>>,
+    /// Where each track's CRC starts and ends, as in [`Crcs`].
+    bounds: Vec<u32>,
+}
+
+impl OffsetCrcs {
+    /// The offset at which `entry` matches all the `trusted` tracks, if
+    /// there is one such track at least.
+    fn entry_offset(&self, entry: &Entry, trusted: &[bool]) -> Option<i32> {
+        let theirs = entry.track_crcs.as_ref().filter(|c| c.len() == self.tracks.len())?;
+        if !trusted.contains(&true) {
+            return None;
+        }
+        (0..=2 * MAX_OFFSET as usize)
+            .find(|&o| {
+                self.tracks.iter().zip(theirs).zip(trusted).all(|((ours, theirs), &trusted)| !trusted || ours[o] == *theirs)
+            })
+            .map(|o| o as i32 - MAX_OFFSET as i32)
+    }
+
+    /// The CRC of track `track` at `offset` once `fixes` (words from the
+    /// start of track 1, see [`parity::Repair`]) are applied, and the fixes
+    /// inside it.
+    fn repaired(&self, track: usize, offset: i32, fixes: &[(usize, u16)]) -> (u32, Vec<(usize, u16)>) {
+        let a = (i64::from(self.bounds[track]) + i64::from(offset)) as usize * 2;
+        let b = (i64::from(self.bounds[track + 1]) + i64::from(offset)) as usize * 2;
+        let inside: Vec<(usize, u16)> = fixes.iter().copied().filter(|&(w, _)| (a..b).contains(&w)).collect();
+        // CRC32 is linear: CRC(x ^ d) = CRC(x) ^ CRC(d) ^ CRC(zeros).
+        let mut delta = vec![0u8; (b - a) * 2];
+        let zeros = crc32fast::hash(&delta);
+        for &(word, value) in &inside {
+            delta[(word - a) * 2..][..2].copy_from_slice(&value.to_le_bytes());
+        }
+        let crc = self.tracks[track][(offset + MAX_OFFSET as i32) as usize] ^ crc32fast::hash(&delta) ^ zeros;
+        (crc, inside)
+    }
+}
+
+/// A track repaired from an entry's parity data, its CRC then matching the
+/// entry's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackRepair {
+    /// Index among the audio tracks.
+    pub track: usize,
+    /// Word (16-bit sample of one channel) from the start of the track, and
+    /// what to XOR it with.
+    pub fixes: Vec<(usize, u16)>,
+    /// Confirmations of the entries the repaired track matches.
+    pub confidence: u32,
+}
+
+/// Parity files downloaded at most, from the most confirmed entries.
+const MAX_PARITY_FILES: usize = 3;
+
+/// Tries to repair the `damaged` tracks (index among the audio tracks, and
+/// doubtful words from the track's start as in [`crate::rip::TrackRead`]),
+/// from the parity of the entries matching the other tracks. Only repairs
+/// that the entry's track CRC confirms are returned.
+pub fn repair(
+    entries: &[Entry],
+    toc: &Toc,
+    crcs: &OffsetCrcs,
+    syndromes: &Syndromes,
+    damaged: &[(usize, &[u32])],
+) -> Vec<TrackRepair> {
+    repair_with(entries, toc, crcs, syndromes, damaged, &mut |e| fetch_parity(e).ok().flatten())
+}
+
+fn repair_with(
+    entries: &[Entry],
+    toc: &Toc,
+    crcs: &OffsetCrcs,
+    syndromes: &Syndromes,
+    damaged: &[(usize, &[u32])],
+    fetch: &mut dyn FnMut(&Entry) -> Option<Vec<u8>>,
+) -> Vec<TrackRepair> {
+    let ours = toc_param(toc);
+    let erasures: Vec<usize> = damaged
+        .iter()
+        .flat_map(|&(track, words)| {
+            let start = 2 * track_samples(toc)[..track].iter().map(|&s| s as usize).sum::<usize>();
+            words.iter().map(move |&w| start + w as usize)
+        })
+        .collect();
+    let damaged: Vec<usize> = damaged.iter().map(|&(track, _)| track).collect();
+    let damaged = damaged.as_slice();
+    let trusted: Vec<bool> = (0..crcs.tracks.len()).map(|t| !damaged.contains(&t)).collect();
+    let mut candidates: Vec<(&Entry, i32)> = entries
+        .iter()
+        .filter(|e| e.toc == ours && e.parity_url.is_some())
+        .filter_map(|e| Some((e, crcs.entry_offset(e, &trusted)?)))
+        .collect();
+    candidates.sort_by_key(|(e, _)| std::cmp::Reverse(e.confidence));
+
+    let starts: Vec<usize> = track_samples(toc)
+        .iter()
+        .scan(0usize, |start, &len| {
+            let s = *start;
+            *start += len as usize;
+            Some(s)
+        })
+        .collect();
+    let mut repairs: Vec<TrackRepair> = Vec::new();
+    for (entry, offset) in candidates.into_iter().take(MAX_PARITY_FILES) {
+        let remaining: Vec<usize> = damaged.iter().copied().filter(|t| !repairs.iter().any(|r| r.track == *t)).collect();
+        if remaining.is_empty() {
+            break;
+        }
+        let Some(data) = fetch(entry) else { continue };
+        let Some(found) = parity::repair(syndromes, &data, entry.npar, offset, &erasures) else { continue };
+        let theirs = entry.track_crcs.as_ref().expect("entries with an offset have track CRCs");
+        for track in remaining {
+            let (crc, fixes) = crcs.repaired(track, offset, &found.fixes);
+            if fixes.is_empty() || crc != theirs[track] {
+                continue;
+            }
+            let confidence = entries
+                .iter()
+                .filter(|e| e.toc == ours && e.track_crcs.as_ref().is_some_and(|c| c.get(track) == Some(&crc)))
+                .map(|e| e.confidence)
+                .sum();
+            let start = 2 * starts[track];
+            let fixes = fixes.into_iter().map(|(word, value)| (word - start, value)).collect();
+            repairs.push(TrackRepair { track, fixes, confidence });
+        }
+    }
+    repairs
+}
+
+/// Downloads an entry's parity file: `None` if it has none or it is not
+/// the expected size.
+fn fetch_parity(entry: &Entry) -> Result<Option<Vec<u8>>> {
+    let Some(url) = &entry.parity_url else { return Ok(None) };
+    let data = http::get_bytes(&http::agent(), url)?;
+    Ok(data.filter(|d| d.len() == entry.npar * parity::ROW * 2))
 }
 
 /// `crc` followed by `len` more bytes, all zero: what combining CRCs needs.
@@ -313,6 +460,8 @@ mod tests {
             crc: crc(bytes(STRIDE, end, o)),
             track_crcs: Some(vec![crc(bytes(STRIDE, t2, o)), crc(bytes(t2, t3, o)), crc(bytes(t3, end, o))]),
             toc: toc_param(&toc),
+            parity_url: None,
+            npar: 0,
         };
         // An entry whose disc CRC differs (another pressing's last track).
         let partial = Entry { confidence: 3, crc: 1, track_crcs: Some(vec![entry.track_crcs.as_ref().unwrap()[0], 2, 3]), ..entry.clone() };
@@ -328,6 +477,46 @@ mod tests {
     }
 
     #[test]
+    fn repairs_a_damaged_track() {
+        let (toc, tracks) = disc();
+        let all = tracks.concat();
+        let total = all.len() as u32 / SAMPLE_BYTES;
+        let end = total - (STRIDE + total % STRIDE);
+        let bytes = |a: u32, b: u32, o: i32| &all[((a as i32 + o) * 4) as usize..((b as i32 + o) * 4) as usize];
+        let (o, t2, t3) = (6, 30 * 588, 75 * 588);
+        let entry = Entry {
+            confidence: 12,
+            crc: crc(bytes(STRIDE, end, o)),
+            track_crcs: Some(vec![crc(bytes(STRIDE, t2, o)), crc(bytes(t2, t3, o)), crc(bytes(t3, end, o))]),
+            toc: toc_param(&toc),
+            parity_url: Some("http://example.com/1".into()),
+            npar: parity::NPAR,
+        };
+        let file = parity::parity_file(&all, o);
+
+        // Track 2 scratched: a few words wrong in two places.
+        let mut damaged = tracks.clone();
+        for word in (1000..1010).chain([20_000]) {
+            damaged[1][2 * word] ^= 0x40;
+        }
+        let mut crcs = Crcs::new(&toc);
+        let mut syndromes = Syndromes::new(total as usize).unwrap();
+        for track in &damaged {
+            crcs.add(track);
+            syndromes.add(track);
+        }
+        let crcs = crcs.finish().unwrap();
+        let repairs = repair_with(&[entry], &toc, &crcs, &syndromes, &[(1, &[])], &mut |_| Some(file.clone()));
+        assert_eq!(repairs.len(), 1);
+        assert_eq!((repairs[0].track, repairs[0].confidence, repairs[0].fixes.len()), (1, 12, 11));
+        for &(word, value) in &repairs[0].fixes {
+            damaged[1][2 * word] ^= value as u8;
+            damaged[1][2 * word + 1] ^= (value >> 8) as u8;
+        }
+        assert!(damaged[1] == tracks[1]);
+    }
+
+    #[test]
     fn incomplete_audio_gives_nothing() {
         let (toc, tracks) = disc();
         let mut crcs = Crcs::new(&toc);
@@ -338,7 +527,7 @@ mod tests {
     #[test]
     fn parses_lookup_replies() {
         let xml = r#"<ctdb xmlns="http://db.cuetools.net/ns/mmd-1.0#">
- <entry confidence="5343" crc32="a738c57b" hasparity="x" id="719472" npar="8" stride="5880" syndrome="AAA=" toc="0:15433:166862" trackcrcs="5c3f254e 1d472275" />
+ <entry confidence="5343" crc32="a738c57b" hasparity="http://p.cuetools.net/719472" id="719472" npar="8" stride="5880" syndrome="AAA=" toc="0:15433:166862" trackcrcs="5c3f254e 1d472275" />
  <entry confidence="1" crc32="85de5b9f" id="2494293" toc="0:15433:166862" />
 </ctdb>"#;
         let entries = parse(xml);
@@ -348,5 +537,7 @@ mod tests {
         assert_eq!(entries[0].track_crcs, Some(vec![0x5c3f254e, 0x1d472275]));
         assert_eq!(entries[1].track_crcs, None);
         assert_eq!(entries[1].toc, "0:15433:166862");
+        assert_eq!((entries[0].parity_url.as_deref(), entries[0].npar), (Some("http://p.cuetools.net/719472"), 8));
+        assert_eq!((entries[1].parity_url.as_deref(), entries[1].npar), (None, 0));
     }
 }

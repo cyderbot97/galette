@@ -291,6 +291,8 @@ fn rip(args: &RipArgs) -> Result<()> {
     };
     let started = Instant::now();
     let mut label = String::new();
+    // Damaged tracks are finished after the others, once repaired.
+    let mut labels = std::collections::HashMap::new();
     let outcome = session::rip(&mut drive, &disc, &settings, &mut |event| {
         match event {
             Event::ReadingSubcode => print!("Subcode  reading pregaps, ISRCs and MCN…"),
@@ -299,7 +301,10 @@ fn rip(args: &RipArgs) -> Result<()> {
                 println!();
             }
             Event::Warning(message) => println!("\rWarning  {message}\x1b[K"),
-            Event::TrackStarted { number, title } => label = format!("{number:>2}. {title}"),
+            Event::TrackStarted { number, title } => {
+                label = format!("{number:>2}. {title}");
+                labels.insert(number, label.clone());
+            }
             Event::TrackProgress { progress, .. } => match progress {
                 rip::Progress::Reading(f) => print!("\r{label}  reading {:>3}%\x1b[K", (f * 100.0) as u32),
                 rip::Progress::Verifying(f) => print!("\r{label}  verifying {:>3}%\x1b[K", (f * 100.0) as u32),
@@ -308,10 +313,15 @@ fn rip(args: &RipArgs) -> Result<()> {
                     rip::MAX_REREADS
                 ),
             },
-            Event::Encoding { .. } => print!("\r{label}  encoding\x1b[K"),
-            Event::TrackDone(track) => {
-                println!("\r{label}  {}  [{}]\x1b[K", log::verdict_text(track.verdict), log::read_summary(&track.read))
-            }
+            Event::Encoding { number } => print!("\r{}  encoding\x1b[K", labels[&number]),
+            Event::TrackHeld { .. } => println!("\r{label}  damaged: waiting to be repaired from the CTDB\x1b[K"),
+            Event::Repairing => print!("\rCTDB     downloading parity data and repairing…\x1b[K"),
+            Event::TrackDone(track) => println!(
+                "\r{}  {}  [{}]\x1b[K",
+                labels[&track.number],
+                log::verdict_text(track.verdict),
+                log::read_summary(&track.read)
+            ),
         }
         std::io::stdout().flush().ok();
     })?;

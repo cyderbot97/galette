@@ -198,6 +198,12 @@ pub fn read_summary(read: &ReadReport) -> String {
     if read.cleared_by_accuraterip > 0 {
         parts.push(format!("{} uncertain sector(s) proven right by AccurateRip", read.cleared_by_accuraterip));
     }
+    if read.repaired_samples > 0 {
+        parts.push(format!(
+            "REPAIRED from CTDB parity ({} sample(s) corrected, {} uncertain sector(s) cleared)",
+            read.repaired_samples, read.cleared_by_ctdb
+        ));
+    }
     parts.join(", ")
 }
 

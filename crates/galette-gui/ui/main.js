@@ -331,6 +331,9 @@ listen("rip", ({ payload: event }) => {
       showReadSummary(row(event.number));
       break;
     }
+    case "repairing":
+      setMessage("rip.repairing", {}, "info");
+      break;
     case "analyzing":
       setMessage("rip.analyzing", {}, "info");
       break;
@@ -403,6 +406,7 @@ function showReadSummary(r) {
     ["read.suspicious", read.suspicious],
     ["read.unreadable", read.unreadable],
     ["read.cleared", read.cleared],
+    ["read.repaired", read.repaired],
   ];
   for (const [key, count] of counts) if (count > 0) parts.push(t(key, { count }));
   r.title = parts.join(", ");
