@@ -29,8 +29,8 @@ testée, et on la raye une fois vérifiée.
   et 12 (59) réparées puis confirmées par AccurateRip.
 - [x] Disque abîmé en mode sécurisé : *Reload* en 12 min, 13/13 pistes
   confirmées.
-- [ ] Mode rapide sur disque abîmé : les secteurs avec erreurs C2 doivent
-  être notés suspects dans le log.
+- [x] Mode rapide sur disque abîmé : *Reload* pistes 11 et 12, les 931 et
+  19 secteurs avec erreurs C2 sont notés suspects dans le log.
 - [x] CTDB : *Reload* entier, 13/13 pistes trouvées et confirmées.
 - [x] CTDB : un rip de quelques pistes dit que seul le disque entier est
   vérifié.
