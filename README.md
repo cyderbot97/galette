@@ -20,15 +20,15 @@ Construire les paquets (il faut Rust, les dépendances ci-dessous et `cargo inst
 cd crates/galette-gui && cargo tauri build
 ```
 
-- Debian / Ubuntu : `sudo apt install ./target/release/bundle/deb/Galette_0.3.0_amd64.deb`
-- Toute distribution : `target/release/bundle/appimage/Galette_0.3.0_amd64.AppImage`, à rendre exécutable puis lancer
+- Debian / Ubuntu : `sudo apt install ./target/release/bundle/deb/Galette_0.5.0_amd64.deb`
+- Toute distribution : `target/release/bundle/appimage/Galette_0.5.0_amd64.AppImage`, à rendre exécutable puis lancer
 
 Galette apparaît alors dans le menu Multimédia. Pour accéder au lecteur, l'utilisateur doit
 faire partie du groupe `cdrom` (c'est le cas par défaut sous Debian et Ubuntu).
 
 ## Installer (macOS)
 
-Ouvrir `Galette_0.3.0_aarch64.dmg` et glisser Galette dans Applications.
+Ouvrir `Galette_0.5.0_aarch64.dmg` et glisser Galette dans Applications.
 L'application n'est pas signée par un certificat Apple : au premier lancement,
 macOS refuse de l'ouvrir. Aller alors dans Réglages Système → Confidentialité et
 sécurité, puis « Ouvrir quand même ».

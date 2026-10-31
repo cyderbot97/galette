@@ -50,9 +50,9 @@ testée, et on la raye une fois vérifiée.
 
 ### macOS
 
-- [ ] ReplayGain (nouveau) : `galette rip --tracks 1,2` en FLAC testé avec
-  *Reload* (−10,78 et −10,96 dB, fichiers intacts). Reste : disque entier
-  (gain d'album), autres formats, case des réglages.
+- [x] Version 0.5.0 : le .dmg installé dans Applications fonctionne.
+- [ ] ReplayGain : disque entier en FLAC testé (*Brand New Eyes*, gain
+  d'album −11,15 dB). Reste : autres formats, case des réglages.
 - [x] Recherche du décalage : *Brand New Eyes* (Paramore) puis *Reload*
   donnent +6, dans la fenêtre comme en ligne de commande.
 - [x] Test du cache : `galette cache` avec l'ASUS (122 ms depuis le disque,

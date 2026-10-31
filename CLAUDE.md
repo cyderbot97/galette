@@ -9,7 +9,7 @@ Secure audio CD ripper, free software (GPL-3.0-or-later): EAC-quality ripping wi
 - **Always ask before pushing, tagging or publishing anything** (git push, GitHub releases, issues).
 - Git identity is anonymous: `cyderbot97 <49147296+cyderbot97@users.noreply.github.com>`. Never send the user's personal email to any service (User-Agent, headers, etc.).
 - Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Versioning: SemVer. 0.1.0 is published (Linux, pre-release); 0.2.0 adds macOS; 0.4.0 adds Windows (Windows-only release: Linux and macOS packages stay at 0.3.0, the code is otherwise identical); 0.5.0 (CTDB, ReplayGain, CD-Text, HTOA, translation…) is released OS by OS: the v0.5.0 release starts with the Windows installer, Linux and macOS packages are added to it once tested there (a code change on the way means 0.5.1 instead). Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
+- Versioning: SemVer. 0.1.0 is published (Linux, pre-release); 0.2.0 adds macOS; 0.4.0 adds Windows (Windows-only release: Linux and macOS packages stay at 0.3.0, the code is otherwise identical); 0.5.0 (CTDB, ReplayGain, CD-Text, HTOA, translation…) was released OS by OS (Windows, then Linux, then macOS) and now covers all three. Patch = fixes, minor = new features (macOS, Windows, CTDB…). The version appears in `Cargo.toml` (workspace), `crates/galette-gui/tauri.conf.json` and the HTTP User-Agent in `galette-core/src/http.rs`.
 
 ## Layout
 
