@@ -10,18 +10,14 @@ testée, et on la raye une fois vérifiée.
 
 ### Linux (Debian)
 
-- [ ] ReplayGain (nouveau) : après un rip du disque entier, les fichiers ont
-  les tags REPLAYGAIN_TRACK_* et REPLAYGAIN_ALBUM_* (un lecteur comme
-  foobar2000 ou VLC les lit) ; le log a une ligne « ReplayGain » par piste et
-  une pour l'album. Essayer FLAC, MP3, ALAC/AAC et AIFF ; la case des
-  réglages doit les désactiver.
-- [ ] Recherche du décalage (nouveau) : Réglages → Lecture → « Détecter avec
-  ce disque » (ou `galette offset`), avec un disque connu d'AccurateRip.
-  Si plusieurs décalages sont possibles, recommencer avec un autre disque :
-  il doit n'en rester qu'un, celui du lecteur.
-- [ ] Test du cache (nouveau) : Réglages → Lecture → « Tester le cache du
-  lecteur » (ou `galette cache`) ; le résultat doit s'afficher en quelques
-  secondes.
+- [x] ReplayGain : *Reload* entier en FLAC dans la fenêtre (−10,78 et
+  −10,96 dB, album −10,28 dB comme sur Windows ; tags présents, `flac -t`
+  sans erreur) ; pistes 1-2 en MP3, ALAC et AIFF (tags présents, lus par
+  mutagen), rien en WAV ; la case des réglages les désactive.
+- [x] Recherche du décalage : *Brand New Eyes* (4 candidats) puis *Reload*
+  donnent +6, dans la fenêtre comme en ligne de commande.
+- [x] Test du cache : `galette cache` avec l'ASUS (133 ms depuis le disque,
+  4 ms en relecture, 2 Mio suffisent) et dans la fenêtre.
 - [ ] Piste cachée avant la piste 1 (HTOA, nouveau) : sur un disque qui en a
   une, la ligne « Piste cachée » apparaît en tête de liste ; elle est rippée
   en piste 00 (ou notée « Silence, pas de fichier »), le cue la référence
@@ -29,29 +25,28 @@ testée, et on la raye une fois vérifiée.
 - [ ] Pré-accentuation (nouveau) : sur un disque concerné (rare, surtout des CD
   des années 80), un avertissement s'affiche, le cue a « FLAGS PRE » et le
   log le signale.
-- [ ] Réparation CTDB (nouveau) : sur un disque abîmé rippé en entier, les
-  pistes abîmées attendent la fin (« Abîmée, réparation à la fin »), puis
-  sont réparées si possible ; le log dit « REPAIRED from CTDB parity ».
-- [ ] Disque abîmé en mode sécurisé (nouveau) : les relectures abandonnent un
-  secteur jamais lu sans erreur après 5 tours ; le rip doit finir en un temps
-  raisonnable et le log noter les secteurs suspects ou illisibles. En mode
-  rapide, les secteurs avec erreurs C2 doivent aussi être notés suspects.
-- [ ] CTDB (nouveau) : après un rip du disque entier, le message final et le
-  log disent ce qu'en pense le CTDB (« disque confirmé (n sur m) ») ; une piste
-  absente d'AccurateRip mais trouvée dans le CTDB affiche « CTDB ✓ ». Essayer
-  aussi un disque absent du CTDB et un rip de quelques pistes seulement.
-- [ ] Langue : passer en anglais dans Réglages → Apparence → Langue, faire un
-  rip, revenir en français (nouveau).
-- [ ] Message sans lecteur : débrancher le lecteur, la fenêtre doit dire
-  « Aucun lecteur détecté. Branchez un lecteur CD. » (nouveau).
-- [ ] Formats ALAC, AIFF et WAV (seuls FLAC et MP3 ont été rippés sous Linux).
+- [x] Réparation CTDB : *Reload*, pistes 11 (71 819 échantillons corrigés)
+  et 12 (59) réparées puis confirmées par AccurateRip.
+- [x] Disque abîmé en mode sécurisé : *Reload* en 12 min, 13/13 pistes
+  confirmées.
+- [ ] Mode rapide sur disque abîmé : les secteurs avec erreurs C2 doivent
+  être notés suspects dans le log.
+- [x] CTDB : *Reload* entier, 13/13 pistes trouvées et confirmées.
+- [x] CTDB : un rip de quelques pistes dit que seul le disque entier est
+  vérifié.
+- [ ] CTDB : un disque absent du CTDB.
+- [x] Langue : anglais, rip, retour au français.
+- [x] Message sans lecteur.
+- [x] Formats ALAC, AIFF et WAV : pistes 1-2 de *Reload* en ligne de
+  commande, toutes confirmées par AccurateRip, pochette et tags présents
+  (sauf WAV), durées exactes.
 - [ ] CD-Text (nouveau) : sur un disque qui en a, la liste Édition propose
   « CD-Text du disque : … » et le badge « CD-Text ✓ » s'affiche ; le log a
   une ligne « CD-Text ». Vérifier aussi qu'un disque sans CD-Text se lit
   normalement (`galette info` affiche le CD-Text s'il y en a).
-- [ ] Thème Cathédrale.
-- [ ] Rip d'un album déjà rippé dans un autre format : le nouveau doit aller
-  dans « Album (FORMAT) » sans toucher au premier.
+- [x] Thème Cathédrale.
+- [x] Rip d'un album déjà rippé dans un autre format : chacun dans
+  « Metallica - Reload (FORMAT) », le FLAC intact.
 
 ### macOS
 
@@ -133,6 +128,13 @@ testée, et on la raye une fois vérifiée.
   disque à l'autre ne tient pas. Piste : écarter un candidat égal à un autre
   plus un décalage de lecteur connu (673 = 6 + 667, 12 = 6 + 6), sauf
   pour les petits écarts.
+- [ ] Icône de la fenêtre : sous Linux (KDE), l'icône en haut à gauche de
+  la fenêtre est à mettre à jour.
+- [ ] Ordre des tags FLAC : l'ajout des tags ReplayGain (`tags::update_flac`,
+  crate metaflac) réécrit tous les commentaires Vorbis dans un ordre
+  différent à chaque fichier. Sans effet sur les lecteurs, mais peu soigné.
+- [ ] Aide de `galette rip` : la description dit encore « to FLAC (or WAV)
+  files » alors que tous les formats sont proposés.
 - [ ] Pochette : Cover Art Archive a répondu une fois HTTP 500 (erreur
   passagère) et le rip est resté sans pochette ; `http.rs` ne réessaie que
   sur 503 et 429, il pourrait réessayer sur toute erreur 5xx.
